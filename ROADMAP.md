@@ -243,6 +243,7 @@ touch mapped, 53 fps full-frame (30 fps USB-bound worst case), idle = 0 frames. 
 ---
 
 #### M6b · Phone modes: PANEL, SCREEN, MOUSE, KEYBOARD, COMBO (+ WEBCAM research) 🟨
+*2026-11-17: WEBCAM researched and parked for the XCover Pro (`docs/research-webcam.md`: the Samsung ISP needs its Android HAL sequence).*
 *User's mode list (2026-11-15), switchable with the side buttons (XCover short = next mode, XCover long =
 menu). PANEL = phonebox-style dashboard on USB B; the others share USB A without re-enumerating.*
 - **PANEL-mode power budget**: PANEL is where the phone spends ~99 % of its time, so nothing may run in the
