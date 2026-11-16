@@ -115,7 +115,7 @@ static void propose(int r) {
     if (r != current && now_ms() - cand_since >= STABLE_MS) {
         current = r;
         logmsg("sensors: orientation %d", r);
-        if (store_get_int("rotation", 0) < 0) hm_set_rotation(r);
+        if (store_get_int("rotation", -1) < 0) hm_set_rotation(r);
     }
 }
 

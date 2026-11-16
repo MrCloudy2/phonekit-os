@@ -132,7 +132,7 @@ int main(void) {
             pfd[n++] = (struct pollfd){.fd = log_port_fd(), .events = POLLIN};
         }
         /* autorotate sensors: only while rotation = AUTO and the screen is on */
-        if (hw && a.have_fb) sensors_set_running(store_get_int("rotation", 0) < 0 && !power_screen_off());
+        if (hw && a.have_fb) sensors_set_running(store_get_int("rotation", -1) < 0 && !power_screen_off());
         int net_idx[2] = {-1, -1};
         for (int k = 0; k < 2; k++)
             if (net_fd(k) >= 0) { net_idx[k] = n; pfd[n++] = (struct pollfd){.fd = net_fd(k), .events = POLLIN}; }

@@ -283,7 +283,7 @@ static int idx_of(const int *v, int n, int x) { for (int i = 0; i < n; i++) if (
 
 static void set_value(int i, char *buf, size_t len) {
     switch (i) {
-    case 0: { int r = store_get_int("rotation", 0);
+    case 0: { int r = store_get_int("rotation", -1);
               if (r < 0) snprintf(buf, len, "AUTO (NO SENSOR YET: %d)", fb->rot); else snprintf(buf, len, "%d", r); break; }
     case 1: snprintf(buf, len, "%d", pcfg.bright); break;
     case 2: pcfg.dim_after_s ? snprintf(buf, len, "%d S", pcfg.dim_after_s) : snprintf(buf, len, "NEVER"); break;
@@ -320,7 +320,7 @@ static void redraw(void);
 /* Steps the value of setting i (dir +1/-1). */
 static void set_step(int i, int dir) {
     switch (i) {
-    case 0: { int k = idx_of(rot_vals, 5, store_get_int("rotation", 0)); k = (k + dir + 5) % 5;
+    case 0: { int k = idx_of(rot_vals, 5, store_get_int("rotation", -1)); k = (k + dir + 5) % 5;
               save_int("rotation", rot_vals[k]);
               hm_set_rotation(rot_vals[k] < 0 ? fb->rot : rot_vals[k]); return; /* redraws */ }
     case 1: power_bright_step(dir); break;
@@ -480,7 +480,7 @@ void hm_set_rotation(int deg) {
 
 void hm_init(struct fb *f) {
     fb = f;
-    int r = store_get_int("rotation", 0);
+    int r = store_get_int("rotation", -1);
     if (r > 0) fb_set_rotation(fb, r); /* auto (-1) keeps the current orientation until the sensor works */
     input_mode = store_get_int("input_mode", IN_TOUCHSCREEN);
     if (input_mode < 0 || input_mode >= IN_MODES) input_mode = IN_TOUCHSCREEN;
