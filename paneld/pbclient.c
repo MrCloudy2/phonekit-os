@@ -322,7 +322,7 @@ static struct blob art_raw;          /* the JPEG/PNG bytes, re-decoded when the 
 static long art_raw_id = -1;
 static struct { int ok, code, is_day; double t, feels, tmax, tmin; char city[40]; int dcode[7]; double dmax[7], dmin[7]; int nd; } W;
 /* list widgets: quotas, sessions, github, processes */
-struct row { char a[64], b[48], c[24]; double pct; uint32_t col; };
+struct row { char a[64], b[48], c[24], err[96]; double pct; uint32_t col; };
 #define ROWS 12
 static struct row q_rows[ROWS], s_rows[ROWS], g_rows[ROWS], p_rows[ROWS];
 static int nq, ns, ng, np, g_notif, p_total;
@@ -538,7 +538,18 @@ static void load_quotas(const char *s) {
         char name[32];
         str(s, n, p, "name", name, sizeof name);
         int lim = json_get(s, tk, n, p, "limits");
-        if (lim < 0 || tk[lim].type != J_ARR) continue;
+        char perr[96];
+        str(s, n, p, "error", perr, sizeof perr);
+        if ((lim < 0 || tk[lim].type != J_ARR || tk[lim].size == 0) && nq < ROWS) { /* no numbers: say why, as the app does */
+            struct row *r = &q_rows[nq++];
+            snprintf(r->a, sizeof r->a, "%.30s", name);
+            snprintf(r->b, sizeof r->b, "\xe2\x80\x94");
+            snprintf(r->c, sizeof r->c, "%.23s", perr[0] ? perr : "no data");
+            snprintf(r->err, sizeof r->err, "%s", perr[0] ? perr : "No data yet");
+            r->pct = -1;
+            r->col = 0x8a94a3;
+            continue;
+        }
         for (int k = 0, l = lim + 1; k < tk[lim].size && nq < ROWS; k++, l = json_skip(tk, n, l)) {
             struct row *r = &q_rows[nq++];
             char lbl[48], sev[16];
@@ -1156,6 +1167,10 @@ static void draw_list(int w, int h, const char *title, uint32_t tcol, const char
         if (bars) {
             cv_text(&cv, F_MEDIUM, fs, w - px - bw, tb, r[i].b, TEXT, 255, 0, 0);
             int ty = tb + P(6), tw = w - 2 * px, th = P(5);
+            if (r[i].pct < 0) { /* provider without numbers: its message instead of a bar */
+                cv_text(&cv, F_REGULAR, ss, px, ty + ss, r[i].err, MUTED, 255, 0, w - 2 * px);
+                continue;
+            }
             cv_rrect(&cv, px, ty, tw, th, th / 2, 0xffffff, 20);
             int fw = (int)(tw * clampf(0, (float)r[i].pct / 100, 1));
             if (fw > th) cv_rrect(&cv, px, ty, fw, th, th / 2, r[i].col, 255);
