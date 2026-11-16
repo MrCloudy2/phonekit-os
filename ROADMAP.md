@@ -396,7 +396,8 @@ menu on-device, per-page key bindings.
 - [ ] Unpaired clients are rejected; a replayed or tampered session fails.
 - [ ] Same latency targets as M7 on a local LAN (**< 50 ms**).
 
-#### M10b · Tethering: phone as a USB Wi-Fi / mobile-data adapter ⬜
+#### M10b · Tethering: phone as a USB Wi-Fi / mobile-data adapter 🟨
+*2026-11-17: `ppctl wifi tether on` — NAT + DHCP router offer, phone side verified (`docs/verification/M10b.md`); PC-side browse test pending.*
 *Added 2026-11-16.*
 **Deliverables**
 - The USB network function (RNDIS/NCM, driverless on Linux/Windows/macOS) routed (NAT) to the phone's Wi-Fi

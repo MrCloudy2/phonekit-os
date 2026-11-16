@@ -225,6 +225,7 @@ int gadget_setup(char ttys[GADGET_PORTS][64], struct fb *f);
 int gadget_set_mode(char m);         /* 'A' display (HID touch [+GUD]), 'B' smart (NCM) */
 char gadget_mode(void);
 void gadget_tick(void);
+void gadget_dhcp_refresh(void);     /* re-offer DHCP to the host (tethering changed) */
 void run_quiet(char *const argv[]);
 
 /* wifi.c — Wi-Fi client (wpa_supplicant + udhcpc) for the network in the settings store */

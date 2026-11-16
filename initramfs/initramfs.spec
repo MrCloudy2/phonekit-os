@@ -30,6 +30,7 @@ dir   /mnt/vendor/efs/wifi 0755 0 0
 ? file  /bin/wpa_supplicant  ${WIFI_DIR}/wpa_supplicant 0755 0 0
 ? file  /bin/wpa_cli         ${WIFI_DIR}/wpa_cli 0755 0 0
 ? file  /bin/iw              ${WIFI_DIR}/iw 0755 0 0
+? file  /bin/iptables        ${WIFI_DIR}/iptables 0755 0 0
 
 # Optional debug shell: `make BUSYBOX=/path/to/static/aarch64/busybox`
 ? file  /bin/busybox       ${BUSYBOX} 0755 0 0

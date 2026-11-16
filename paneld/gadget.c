@@ -251,11 +251,18 @@ static void ncm_net_up(void) {
     if (access("/bin/busybox", X_OK) != 0) { logmsg("usb: no busybox: %s left unconfigured", ifname); return; }
     char *up[] = {"/bin/busybox", "ifconfig", ifname, "10.42.0.2", "netmask", "255.255.255.0", "up", NULL};
     run_quiet(up);
-    /* DHCP for the host: one lease, no router/DNS (so the host keeps its own default route) */
-    char conf[256];
+    /* DHCP for the host: one lease, no router/DNS (so the host keeps its own default route) unless tethering
+     * is on (M10b): then the phone is the host's router and DNS (its Wi-Fi uplink, NATed in wifi.c) */
+    char conf[512];
+    int tether = store_get_int("tether", 0);
+    char dns[64] = "";
+    if (tether) { char r[256] = ""; read_file("/run/resolv.conf", r, sizeof r); char *d = strstr(r, "nameserver ");
+                  if (d) { sscanf(d + 11, "%63s", dns); } }
     snprintf(conf, sizeof conf,
              "start 10.42.0.1\nend 10.42.0.1\ninterface %s\nmax_leases 1\n"
-             "lease_file /run/udhcpd.leases\nopt subnet 255.255.255.0\n", ifname);
+             "lease_file /run/udhcpd.leases\nopt subnet 255.255.255.0\n%s%s%s%s",
+             ifname, tether ? "opt router 10.42.0.2\nopt lease 600\n" : "",
+             tether ? "opt dns " : "", tether ? (dns[0] ? dns : "1.1.1.1") : "", tether ? "\n" : "");
     /* regular files here (write_file() is for sysfs/configfs and doesn't create) */
     int fd = open("/run/udhcpd.conf", O_CREAT | O_TRUNC | O_WRONLY | O_CLOEXEC, 0644);
     if (fd >= 0) { (void)!write(fd, conf, strlen(conf)); close(fd); }
@@ -359,6 +366,9 @@ int gadget_setup(char ttys[GADGET_PORTS][64], struct fb *f) {
            ttys[GADGET_SH][0] ? ttys[GADGET_SH] : "-", mode);
     return 0;
 }
+
+/* Rewrites the host's DHCP offer (tethering on/off); the host picks it up at its next renewal or replug. */
+void gadget_dhcp_refresh(void) { if (mode == 'B' && ncm_fn) ncm_net_up(); }
 
 int gadget_set_mode(char m) {
     if (m != 'A' && m != 'B') return -1;

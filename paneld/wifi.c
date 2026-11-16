@@ -86,11 +86,26 @@ static void start(void) {
     logmsg("wifi: joining '%s' (wpa_supplicant %d, udhcpc %d)", ssid, wpa_pid, dhcp_pid);
 }
 
+/* Tethering (M10b): forward the USB network (10.42.0.0/24) out of wlan0 with NAT while Wi-Fi has an address. */
+static int nat_on;
+static void tether_apply(int want) {
+    if (want == nat_on || access("/bin/iptables", X_OK) != 0) return;
+    int fd = open("/proc/sys/net/ipv4/ip_forward", O_WRONLY | O_CLOEXEC);
+    if (fd >= 0) { (void)!write(fd, want ? "1" : "0", 1); close(fd); }
+    char *rule[] = {"/bin/iptables", "-t", "nat", want ? "-A" : "-D", "POSTROUTING", "-s", "10.42.0.0/24", "-o", "wlan0", "-j", "MASQUERADE", NULL};
+    run_quiet(rule);
+    nat_on = want;
+    logmsg("wifi: tethering %s", want ? "on (USB network -> wlan0, NAT)" : "off");
+}
+
 /* Main loop, about once a second: (re)start when configured, restart crashed helpers. */
 void wifi_tick(void) {
     if (now_ms() < next_try) return;
     next_try = now_ms() + 5000;
     int configured = store_get("wifi.ssid", "")[0] != 0;
+    char ip[32] = "";
+    int have_ip = configured && read_file("/run/wifi.ip", ip, sizeof ip) >= 0 && ip[0];
+    tether_apply(store_get_int("tether", 0) && have_ip);
     if (!configured) { if (wpa_pid > 0) stop_all(); return; }
     if (wpa_pid > 0 && waitpid(wpa_pid, NULL, WNOHANG) == wpa_pid) wpa_pid = -1;
     if (dhcp_pid > 0 && waitpid(dhcp_pid, NULL, WNOHANG) == dhcp_pid) dhcp_pid = -1;
@@ -115,9 +130,16 @@ int wifi_ctl(char **argv, int argc, char *out, size_t len) {
         return snprintf(out, len, "wifi off\n");
     }
     if (argc > 1 && !strcmp(argv[1], "scan")) return -2; /* ctl runs `iw` (it can take a few seconds) */
+    if (argc > 2 && !strcmp(argv[1], "tether")) {
+        int on = !strcmp(argv[2], "on");
+        store_set("tether", on ? "1" : "0");
+        next_try = 0;
+        gadget_dhcp_refresh();
+        return snprintf(out, len, "tethering %s (the PC picks up the new DHCP offer at its next renewal or replug)\n", on ? "on" : "off");
+    }
     char ip[32] = "";
     if (read_file("/run/wifi.ip", ip, sizeof ip) < 0) ip[0] = 0;
-    return snprintf(out, len, "configured %s\nssid %s\nwpa_supplicant %d\nudhcpc %d\nip %s\ntools %s\n",
+    return snprintf(out, len, "configured %s\nssid %s\nwpa_supplicant %d\nudhcpc %d\nip %s\ntether %s\ntools %s\n",
                     store_get("wifi.ssid", "")[0] ? "yes" : "no", store_get("wifi.ssid", ""), wpa_pid, dhcp_pid,
-                    ip[0] ? ip : "-", have_tools() ? "yes" : "missing (scripts/build-wifi-tools.sh)");
+                    ip[0] ? ip : "-", nat_on ? "on (NAT active)" : store_get_int("tether", 0) ? "on (waiting for Wi-Fi)" : "off", have_tools() ? "yes" : "missing (scripts/build-wifi-tools.sh)");
 }

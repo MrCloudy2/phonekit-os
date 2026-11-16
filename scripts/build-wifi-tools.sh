@@ -3,7 +3,7 @@
 #
 #   scripts/build-wifi-tools.sh        (sources downloaded into third_party/, see below)
 #
-# Output: out/wifi/{wpa_supplicant,wpa_cli,iw}. wpa_supplicant uses its internal TLS/crypto, so no OpenSSL is
+# Output: out/wifi/{wpa_supplicant,wpa_cli,iw,iptables}. wpa_supplicant uses its internal TLS/crypto, so no OpenSSL is
 # needed: WPA2-Personal only for now (WPA3/SAE needs EC crypto, i.e. OpenSSL or wolfSSL; later).
 # Sources (sha256 in third_party/wifi-tools.sha256):
 #   https://github.com/thom311/libnl/releases/download/libnl3_12_0/libnl-3.12.0.tar.gz
@@ -60,6 +60,17 @@ EOF
   make -j"$jobs" CC="$CC" PKG_CONFIG=pkg-config NLLIBNAME=libnl-3.0 \
        CFLAGS="-Os -I$pfx/include/libnl3 -DCONFIG_LIBNL30" LDFLAGS="-static -L$pfx/lib" LIBS="-lnl-genl-3 -lnl-3 -lpthread -lm" >/dev/null
   cp iw "$out/" )
+
+# iptables (legacy backend only, static) for tethering NAT (M10b): the kernel has IP_NF_NAT + MASQUERADE
+[[ -f iptables-1.8.11.tar.xz ]] || curl -fsSL -o iptables-1.8.11.tar.xz https://www.netfilter.org/pub/iptables/iptables-1.8.11.tar.xz
+sha256sum -c iptables.sha256
+[[ -d iptables-1.8.11 ]] || tar xf iptables-1.8.11.tar.xz
+( cd iptables-1.8.11
+  [[ -f .pp-built ]] || {
+    ./configure --host=$HOST CC="$CC" --prefix=/ --disable-nftables --enable-static --disable-shared \
+                --disable-ipv6 --disable-devel --without-kernel >/dev/null
+    make -j"$jobs" LDFLAGS="-all-static" >/dev/null && touch .pp-built; }
+  cp iptables/xtables-legacy-multi "$out/iptables" )
 
 ${CROSS_STRIP:-aarch64-linux-gnu-strip} "$out"/*
 ls -la "$out"
