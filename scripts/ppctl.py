@@ -131,7 +131,11 @@ class Ctl:
         if payload:
             view = memoryview(payload)
             while view:
-                n = os.write(self.fd, view[:16384])
+                try:
+                    n = os.write(self.fd, view[:16384])
+                except BlockingIOError:  # the tty's buffer is full: wait until the phone has read some
+                    select.select([], [self.fd], [], 5)
+                    continue
                 view = view[n:]
         deadline = time.monotonic() + (timeout or self.timeout)
         blocks, code = [], None

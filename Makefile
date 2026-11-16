@@ -23,7 +23,7 @@ BUSYBOX ?= $(wildcard $(CURDIR)/out/busybox/busybox)
 
 IMG := $(OUT)/phonepanel.img
 
-.PHONY: all import flash deploy logs test clean FORCE
+.PHONY: all import flash deploy update logs test clean FORCE
 all: $(IMG)
 
 import:
@@ -71,6 +71,10 @@ flash: $(IMG)
 # Hands-free loop from a running userdebug ROM (no download mode, no buttons):
 #   make deploy   build, dd onto the phonepanel partition over adb, verify, reboot into it
 #   make logs     after it rebooted back into the ROM: phonepanel lines from last_kmsg
+# Update a phone that is running PhoneKit, from PhoneKit itself (no ROM round trip): scripts/pk-update.sh
+update: $(IMG)
+	scripts/pk-update.sh $(IMG) $(TARGET_PARTITION_NAME)
+
 deploy: $(IMG)
 	scripts/phone.sh flash $(IMG) $(TARGET_PARTITION_NAME)
 	scripts/phone.sh boot

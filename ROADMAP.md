@@ -484,7 +484,8 @@ works unmodified. (A bridge in our own host agent, the first plan, isn't needed.
 - [ ] A non-developer builds a 2-page dashboard without editing JSON.
 - [ ] Edits appear on the phone in **< 1 s**.
 
-#### M14 · Updates and recovery ⬜
+#### M14 · Updates and recovery 🟨
+*2026-11-17: `make update` self-updates in 13 s, verified, settings kept (`docs/verification/M14.md`); safe mode pending.*
 **Deliverables**
 - Update `paneld`, the initramfs or the whole boot image from the agent. Use A/B slots where the device has them, and keep a fallback image.
 - Safe mode: hold a button combo or touch pattern at boot → console plus default layout.

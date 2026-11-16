@@ -34,6 +34,7 @@ static size_t line_len;
 /* put state */
 static int put_fd = -1;
 static size_t put_left;
+static long put_last_ms; /* last payload byte: a put that stalls is abandoned (see ctl_handle) */
 static char put_path[512], put_tmp[520];
 static mode_t put_mode;
 
@@ -227,6 +228,7 @@ static void cmd_put(char **argv, int argc) {
     snprintf(put_path, sizeof put_path, "%s", argv[1]);
     snprintf(put_tmp, sizeof put_tmp, "%s.part", put_path);
     put_left = strtoull(argv[2], NULL, 10);
+    put_last_ms = now_ms();
     put_mode = argc > 3 ? (mode_t)strtoul(argv[3], NULL, 8) : 0644;
     put_fd = open(put_tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, put_mode);
     if (put_fd < 0) {
@@ -646,9 +648,18 @@ int ctl_handle(struct app *a) {
     if (n == 0 || (n < 0 && errno != EAGAIN && errno != EINTR)) return -1; /* hung up */
     if (n < 0) return 0;
     a->last_activity_ms = now_ms();
+    if (put_path[0] && put_left && now_ms() - put_last_ms > 10000) {
+        /* the host gave up half-way (crashed client, cable): don't treat its next commands as file data */
+        logmsg("ctl: put %s abandoned with %zu bytes missing", put_path, put_left);
+        if (put_fd >= 0) { close(put_fd); put_fd = -1; }
+        unlink(put_tmp);
+        put_path[0] = 0;
+        put_left = 0;
+    }
     size_t i = 0;
     while (i < (size_t)n) {
         if (put_path[0] && put_left) { /* raw bytes of a put */
+            put_last_ms = now_ms();
             size_t take = (size_t)n - i < put_left ? (size_t)n - i : put_left;
             if (put_fd >= 0 && write(put_fd, buf + i, take) != (ssize_t)take) {
                 logmsg("ctl: put write: %s", strerror(errno));

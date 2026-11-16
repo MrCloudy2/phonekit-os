@@ -139,7 +139,8 @@ Full details per device are in `devices/<device>/device.yaml`.
 |---|---|
 | `make import` | Take kernel/DTB/DTBO from a known-good boot or recovery image |
 | `make` | Build paneld + initramfs + boot image (kernel prebuilt or from source: `KERNEL=source`) |
-| `make deploy` | Write the image over adb (keeps the settings area), verify sha256, reboot into it |
+| `make deploy` | Write the image over adb from the ROM (keeps the settings area), verify sha256, reboot into it |
+| `make update` | Same, from PhoneKit itself over the USB control channel: ~13 s, no ROM round trip |
 | `make flash` | Flash from download/fastboot mode |
 | `make logs` | Read paneld's log from the last boot (`last_kmsg`) |
 | `make test` | Run paneld under qemu (no phone needed) |
