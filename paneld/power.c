@@ -122,6 +122,7 @@ void power_toggle(void) {
 }
 
 void power_off(const char *why) { enter(OFF, why); }
+void power_dim(const char *why) { if (state == ACTIVE) enter(DIM, why); }
 
 void power_wake(const char *why) {
     user_ms = now_ms();

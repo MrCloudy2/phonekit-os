@@ -136,6 +136,7 @@ void power_bright_step(int dir);
 void power_set_percent(int pct); /* 0..100 perceptual (GUD backlight property) */
 int power_tick(void); /* returns ms until the next deadline */
 int power_screen_off(void);
+void power_dim(const char *why);   /* ACTIVE -> DIM (backlight to the dim level); input brightens again */
 int power_ctl(char **argv, int argc, char *buf, size_t len);
 
 /* keys.c — hardware keys -> configurable short/long-press actions */

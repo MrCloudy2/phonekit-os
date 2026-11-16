@@ -330,6 +330,13 @@ static char g_err[120], q_head[40];
 static long tz_off;            /* seconds east of UTC, from open-meteo for the configured place */
 static long long pc_ts_skew;   /* PC epoch ms − phone epoch ms */
 
+/* standby (Settings > WHEN PC IS GONE): hold the last page, an ambient clock, or the screen off */
+static int gone;                 /* currently in standby */
+static long last_seen_ms;        /* last time the agent stream was up */
+
+static void draw_ambient(void);
+static const char *standby_mode(void);
+
 static struct fb *fb;
 static struct canvas cv;
 static float SC;  /* device px per CSS px */
@@ -1279,6 +1286,7 @@ static void geometry(void) {
 
 void pb_draw(void) {
     if (!fb || !fb->mem || !have_cfg) return;
+    if (gone && !strcmp(standby_mode(), "ambient")) { draw_ambient(); return; }
     geometry();
     fb_fill(fb, 0, 0, fb->w, fb->h, fb_color(fb, BG >> 16, BG >> 8 & 255, BG & 255));
     nhits = 0;
@@ -1289,9 +1297,61 @@ void pb_draw(void) {
 
 static void redraw_types(int mask) {
     if (!visible()) return;
+    if (gone && !strcmp(standby_mode(), "ambient")) { if (mask & (1 << T_CLOCK)) draw_ambient(); return; }
     geometry();
     for (int i = 0; i < pg[cur].n; i++) if (mask & (1 << pg[cur].w[i].type)) draw_widget(i);
     fb_present(fb);
+}
+
+/* Full-screen ambient clock: time, date, the phone's battery; drawn dim (the backlight is dimmed too). */
+static void draw_ambient(void) {
+    geometry();
+    if (cv_alloc(&cv, fb->w, fb->h) < 0) return;
+    cv_clear(&cv, 0x000000);
+    time_t t = local_now();
+    struct tm tm;
+    gmtime_r(&t, &tm);
+    char hm[8], date[48], bat[48] = "";
+    snprintf(hm, sizeof hm, "%02d:%02d", tm.tm_hour, tm.tm_min);
+    static const char *const DAY[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+    static const char *const MON[] = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
+    snprintf(date, sizeof date, "%s %d %s", DAY[tm.tm_wday], tm.tm_mday, MON[tm.tm_mon]);
+    FILE *f = fopen("/sys/class/power_supply/battery/capacity", "r");
+    if (f) { int b; if (fscanf(f, "%d", &b) == 1) snprintf(bat, sizeof bat, "PC offline \xc2\xb7 phone %d%%", b); fclose(f); }
+    int ts = (int)fminf(fb->h * 0.42f, fb->w * 0.30f);
+    int tw = cv_text_w(F_LIGHT, ts, hm, -ts * 0.04f);
+    int base = fb->h / 2 + ts / 3;
+    cv_text(&cv, F_LIGHT, ts, (fb->w - tw) / 2, base, hm, 0xc9d1db, 255, -ts * 0.04f, 0);
+    int ds = P(18);
+    cv_text(&cv, F_REGULAR, ds, (fb->w - cv_text_w(F_REGULAR, ds, date, 0)) / 2, base + (int)(ds * 2.0f), date, MUTED, 255, 0, 0);
+    int bs = P(12);
+    cv_text(&cv, F_REGULAR, bs, (fb->w - cv_text_w(F_REGULAR, bs, bat, 0)) / 2, fb->h - P(20), bat, DIM, 255, 0, 0);
+    fb_blit(fb, &cv, 0, 0);
+    fb_present(fb);
+}
+
+static const char *standby_mode(void) { return store_get("standby", "hold"); }
+
+/* Called once a second: enter standby when the PC is gone (stream down 15 s, or USB suspended/unplugged),
+ * leave it when the agent is back. */
+static void standby_tick(void) {
+    const char *us = gadget_state();
+    int usb_away = !strcmp(us, "suspended") || !strcmp(us, "not attached");
+    if (connected) last_seen_ms = now_ms();
+    int away = usb_away || (!connected && now_ms() - last_seen_ms > 15000);
+    if (away && !gone) {
+        gone = 1;
+        const char *m = standby_mode();
+        logmsg("phonebox: PC gone (%s) -> standby %s", usb_away ? us : "no stream", m);
+        if (!strcmp(m, "sleep")) power_off("PC gone");
+        else if (!strcmp(m, "ambient")) { power_dim("PC gone"); if (visible()) draw_ambient(); }
+        else if (visible()) pb_draw(); /* hold: the status dot turns red */
+    } else if (!away && gone) {
+        gone = 0;
+        logmsg("phonebox: PC back");
+        power_wake("PC back");
+        if (visible()) pb_draw();
+    }
 }
 
 /* ================================================================ main-loop API */
@@ -1332,6 +1392,7 @@ void pb_handle(void) {
     if (qb.data) { load_quotas(qb.data); mask |= 1 << T_QUOTAS; }
     if (pr.data) { load_procs(pr.data); mask |= 1 << T_PROCS; }
     free(c.data); free(s.data); free(a.data); free(w.data); free(wk.data); free(qb.data); free(pr.data);
+    if (have_cfg) standby_tick(); /* also here: with the screen off the 1 s UI tick doesn't run, data does */
     if (full) { if (visible()) pb_draw(); }
     else if (mask) redraw_types(mask);
 }
@@ -1341,6 +1402,7 @@ void pb_tick(void) {
     static int last_land = -1;
     static long wx_at;
     if (!have_cfg) return;
+    standby_tick();
     if (now_ms() - wx_at > 15 * 60 * 1000) { wx_at = now_ms(); wx_want = 1; }
     int procs = 0;
     for (int i = 0; i < pg[cur].n; i++) procs |= pg[cur].w[i].type == T_PROCS;
@@ -1398,9 +1460,9 @@ int pb_page_step(int d) {
 }
 
 int pb_stats(char *b, size_t len) {
-    return snprintf(b, len, "connected %d\nconfig_version %lld\nconfigs %lu\nstates %lu\nposts %lu\npages %d\npage %d\nweather %d\n"
+    return snprintf(b, len, "standby %s%s\nconnected %d\nconfig_version %lld\nconfigs %lu\nstates %lu\nposts %lu\npages %d\npage %d\nweather %d\n"
                     "tz_off %ld\nart %ld\nhits %d\n",
-                    connected, cfg_version, n_cfgs, n_states, n_posts, npg, cur, W.ok, tz_off, art_id_loaded, nhits);
+                    gone ? "on " : "off ", standby_mode(), connected, cfg_version, n_cfgs, n_states, n_posts, npg, cur, W.ok, tz_off, art_id_loaded, nhits);
 }
 
 void pb_init(struct fb *f) {

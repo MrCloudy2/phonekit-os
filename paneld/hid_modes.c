@@ -272,8 +272,9 @@ static const char *const menu_items[] = {"PHONEBOX", "SCREEN", "MOUSE", "KEYBOAR
 enum { MI_PANEL, MI_SCREEN, MI_MOUSE, MI_KEYBOARD, MI_COMBO, MI_WEBCAM, MI_SETTINGS, MI_CLOSE };
 
 /* ---------------------------------------------------------------- settings */
-#define SET_N 7
-static const char *const set_names[SET_N] = {"ROTATION", "BRIGHTNESS", "DIM AFTER", "SCREEN OFF", "CHARGE LIMIT", "USB NETWORK", "BACK"};
+#define SET_N 8
+static const char *const set_names[SET_N] = {"ROTATION", "BRIGHTNESS", "DIM AFTER", "SCREEN OFF", "CHARGE LIMIT", "USB NETWORK", "WHEN PC IS GONE", "BACK"};
+static const char *const standby_vals[] = {"hold", "ambient", "sleep"};
 static const int rot_vals[] = {-1, 0, 90, 180, 270};           /* -1 = auto */
 static const int dim_vals[] = {30, 60, 120, 300, 0};           /* 0 = never */
 static const int off_vals[] = {60, 300, 900, 1800, 0};
@@ -284,12 +285,14 @@ static int idx_of(const int *v, int n, int x) { for (int i = 0; i < n; i++) if (
 static void set_value(int i, char *buf, size_t len) {
     switch (i) {
     case 0: { int r = store_get_int("rotation", -1);
-              if (r < 0) snprintf(buf, len, "AUTO (NO SENSOR YET: %d)", fb->rot); else snprintf(buf, len, "%d", r); break; }
+              if (r < 0) snprintf(buf, len, "AUTO (NOW %d)", fb->rot); else snprintf(buf, len, "%d", r); break; }
     case 1: snprintf(buf, len, "%d", pcfg.bright); break;
     case 2: pcfg.dim_after_s ? snprintf(buf, len, "%d S", pcfg.dim_after_s) : snprintf(buf, len, "NEVER"); break;
     case 3: pcfg.off_after_s ? snprintf(buf, len, "%d MIN", pcfg.off_after_s / 60) : snprintf(buf, len, "NEVER"); break;
     case 4: pcfg.limiter ? snprintf(buf, len, "%d-%d %%", pcfg.charge_lo, pcfg.charge_hi) : snprintf(buf, len, "OFF"); break;
     case 5: snprintf(buf, len, "%s (REBOOT)", store_get("usb_net", "rndis")); break;
+    case 6: { const char *v = store_get("standby", "hold");
+              snprintf(buf, len, "%s", !strcmp(v, "ambient") ? "AMBIENT CLOCK" : !strcmp(v, "sleep") ? "SCREEN OFF" : "KEEP LAST PAGE"); break; }
     default: buf[0] = 0;
     }
 }
@@ -333,7 +336,10 @@ static void set_step(int i, int dir) {
               save_int("power.limiter", pcfg.limiter); save_int("power.charge_lo", pcfg.charge_lo);
               save_int("power.charge_hi", pcfg.charge_hi); break; }
     case 5: store_set("usb_net", strcmp(store_get("usb_net", "rndis"), "rndis") ? "rndis" : "ncm"); break;
-    case 6: settings_open = 0; redraw(); return;
+    case 6: { const char *v = store_get("standby", "hold");
+              int k = !strcmp(v, "ambient") ? 1 : !strcmp(v, "sleep") ? 2 : 0;
+              store_set("standby", standby_vals[(k + dir + 3) % 3]); break; }
+    case 7: settings_open = 0; redraw(); return;
     }
     draw_settings();
     fb_present(fb);

@@ -170,7 +170,8 @@ battery-less test, < 100 mW off (133 mW now; needs suspend-to-RAM).*
 - [ ] Idle power with the screen blanked is measured and recorded (target: **< 100 mW**, to verify).
 - [ ] Clean behaviour on power loss (no filesystem corruption: rootfs is read-only and config uses atomic writes).
 
-#### M4b · Standby policy: what the phone does when the host is gone ⬜
+#### M4b · Standby policy: what the phone does when the host is gone 🟨
+*2026-11-16: hold / ambient / sleep done in PHONEBOX mode and in Settings (`docs/verification/M4b.md`); PC-suspend test and the PPJ/1 path pending.*
 *Added 2026-11-16 at the user's request.* A Settings entry, per mode, the user chooses:
 **Deliverables**
 - **Ambient**: clock + user-picked basic widgets (date, battery, last values), refreshed once a minute, CPUs
