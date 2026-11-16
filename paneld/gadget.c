@@ -238,10 +238,16 @@ static void run_quiet(char *const argv[]) {
 
 static pid_t dhcpd_pid = -1;
 
+static char net_if[32] = "usb0";
+static long net_bound_ms;
+static int net_heals;
+
 static void ncm_net_up(void) {
     char ifname[32] = "usb0", p[128];
     snprintf(p, sizeof p, G "/functions/%s/ifname", ncm_fn);
     read_file(p, ifname, sizeof ifname);
+    snprintf(net_if, sizeof net_if, "%s", ifname);
+    net_bound_ms = now_ms();
     if (access("/bin/busybox", X_OK) != 0) { logmsg("usb: no busybox: %s left unconfigured", ifname); return; }
     char *up[] = {"/bin/busybox", "ifconfig", ifname, "10.42.0.2", "netmask", "255.255.255.0", "up", NULL};
     run_quiet(up);
@@ -373,7 +379,7 @@ int gadget_set_mode(char m) {
     if (m == 'B' && ncm_fn) link_function(ncm_fn);
     if (wr("UDC", udc) < 0) return -1;
     mode = m;
-    if (m == 'B' && ncm_fn) ncm_net_up();
+    if (m == 'B' && ncm_fn) { if (net_heals >= 3) net_heals = 0; ncm_net_up(); }
     if (m == 'A' && hid_fn) {
         char p[32];
         for (int i = 0; i < 20 && access("/dev/hidg0", F_OK) < 0; i++) {
@@ -391,6 +397,28 @@ int gadget_set_mode(char m) {
 }
 
 char gadget_mode(void) { return mode; }
+
+static long net_stat(const char *what) {
+    char p[96], b[32];
+    snprintf(p, sizeof p, "/sys/class/net/%s/statistics/%s", net_if, what);
+    return read_file(p, b, sizeof b) > 0 ? atol(b) : -1;
+}
+
+/* Samsung's RNDIS sometimes never transmits after the gadget comes up at boot: the host's
+ * frames arrive (RX grows) but nothing goes out (TX 0, host ARP fails). Re-linking the
+ * function fixes it (a runtime A->B switch always worked). Checked once a second in mode B. */
+void gadget_tick(void) {
+    static long last;
+    if (mode != 'B' || !ncm_fn || now_ms() - last < 1000) return;
+    last = now_ms();
+    if (net_heals >= 3 || now_ms() - net_bound_ms < 6000 || strcmp(gadget_state(), "configured")) return;
+    long rx = net_stat("rx_packets"), tx = net_stat("tx_packets");
+    if (rx >= 8 && tx == 0) {
+        net_heals++;
+        logmsg("usb: %s RX %ld but TX 0: re-linking the network function (heal #%d)", net_if, rx, net_heals);
+        gadget_set_mode('B');
+    } else if (tx > 0) net_heals = 3; /* working: stop checking until the next bind */
+}
 
 /* UDC state: "configured" when a host has set us up, "not attached", "default", ... */
 const char *gadget_state(void) {

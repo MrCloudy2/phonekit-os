@@ -9,7 +9,7 @@
 static struct fb *fb;
 static int page = UI_PAGE_TEST;
 static long toast_until;
-static const char *const page_name[UI_PAGES] = {"TEST", "STATUS"};
+static const char *const page_name[UI_PAGES] = {"TEST", "STATUS", "PANEL"};
 
 void ui_init(struct fb *f) { fb = f; }
 int ui_page(void) { return page; }
@@ -44,6 +44,7 @@ static void draw_status_page(void) {
 }
 
 static void draw_page(void) {
+    if (page == UI_PAGE_PANEL) { panel_draw(); return; }
     if (page == UI_PAGE_TEST) draw_test_pattern(fb);
     else {
         uint32_t bg = fb_color(fb, 10, 14, 22);
@@ -60,7 +61,15 @@ void ui_page_set(int p) {
     fb_present(fb);
 }
 
-void ui_page_step(int d) { ui_page_set(page + d); }
+/* Order: PANEL pages (if the host sent a layout) -> STATUS -> TEST -> back to PANEL. */
+void ui_page_step(int d) {
+    if (page == UI_PAGE_PANEL && !panel_page_step(d)) return; /* moved within the panel pages */
+    static const int order[] = {UI_PAGE_PANEL, UI_PAGE_STATUS, UI_PAGE_TEST};
+    int i = 0;
+    while (order[i] != page) i++;
+    do i = (i + d + 3) % 3; while (order[i] == UI_PAGE_PANEL && !panel_has_layout());
+    ui_page_set(order[i]);
+}
 
 /* Short banner at the bottom (e.g. after a mode switch), cleared after 2 s. */
 void ui_toast(const char *msg) {
@@ -77,4 +86,5 @@ void ui_tick(void) {
     if (!fb || !fb->mem) return;
     if (toast_until && now_ms() >= toast_until) { toast_until = 0; draw_page(); }
     if (page == UI_PAGE_STATUS) draw_status_page();
+    if (page == UI_PAGE_PANEL) panel_tick();
 }

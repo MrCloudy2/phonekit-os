@@ -349,6 +349,7 @@ static void cmd_touch(struct app *a, char **argv, int argc) {
     pid_t p = fork();
     if (p < 0) { err_errno("fork"); return; }
     if (p == 0) {
+        setsid(); signal(SIGHUP, SIG_IGN); /* outlive the host closing the ctl tty mid-gesture */
         int rc = 0;
         if (!strcmp(m, "tap")) {
             int xs[3] = {v[0], v[0], v[0]}, ys[3] = {v[1], v[1], v[1]};
@@ -402,8 +403,11 @@ static void log_junk(const char *l, size_t len) {
     logmsg("ctl: ignoring non-command line (%zu bytes): %s", len, hex);
 }
 
+static char l_raw[LINE_MAX_]; /* the line before split() (for commands taking raw JSON) */
+
 static void dispatch(struct app *a, char *l, size_t len) {
     if (!is_command(l, len)) { if (len) log_junk(l, len); return; }
+    memcpy(l_raw, l, len + 1);
     out_dead = 0;
     char *argv[MAX_ARGS];
     int argc = split(l, argv);
@@ -483,6 +487,13 @@ static void dispatch(struct app *a, char *l, size_t len) {
         char b2[256];
         int n2 = hm_status(b2, sizeof b2);
         data(b2, n2);
+        ok(NULL);
+    } else if (!strcmp(c, "panel")) {
+        /* panel <json line>: feed PPJ/1 directly (the rest of the line, unsplit) */
+        const char *js = strchr(l_raw, ' ');
+        static char rep[1024];
+        int n2 = js ? panel_handle(js + 1, (int)strlen(js + 1), rep, sizeof rep) : 0;
+        data(rep, n2 > 0 ? (size_t)n2 : 0);
         ok(NULL);
     } else if (!strcmp(c, "sensors")) {
         char b2[256];

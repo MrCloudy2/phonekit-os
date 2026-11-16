@@ -374,7 +374,7 @@ static void menu_choose(int i) {
     } else if (i == MI_PANEL) {
         if (gadget_mode() != 'B') { store_set("usb_mode", "B"); gadget_set_mode('B'); }
         logmsg("mode: PANEL");
-        ui_page_set(UI_PAGE_STATUS);
+        ui_page_set(UI_PAGE_PANEL);
         ui_toast("PANEL");
     } else if (i == MI_WEBCAM) {
         ui_toast("WEBCAM: NOT YET");
@@ -506,6 +506,7 @@ int hm_touch_frame(void) {
     int ids[10], xs[10], ys[10];
     int n = touch_active_px(ids, xs, ys, 10);
     int o = hm_owner();
+    if (o == OWN_PAGE && ui_page() == UI_PAGE_PANEL) { panel_touch(ids, xs, ys, n); return 1; }
     if (o == OWN_MENU) { if (settings_open) settings_frame(ids, xs, ys, n); else menu_frame(ids, xs, ys, n); return 1; }
     if (o != OWN_INPUT) return 0;
     if (input_mode == IN_TRACKPAD) {

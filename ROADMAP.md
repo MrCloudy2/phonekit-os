@@ -223,7 +223,7 @@ touch mapped, 53 fps full-frame (30 fps USB-bound worst case), idle = 0 frames. 
 - [ ] Touch maps 1:1 to the correct monitor on a multi-monitor host (X11 and Wayland).
 - [ ] Idle host desktop → the phone is in M3 idle (no flushes).
 
-#### M7 · Mode B: smart display protocol ⬜
+#### M7 · Mode B: smart display protocol ✅
 **Deliverables**
 - `protocol/` spec v1: framed binary messages with a text/JSON debug variant. Covers
   layout, widget create/update/delete, data binding updates, touch/widget events, ping,

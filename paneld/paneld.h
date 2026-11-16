@@ -125,7 +125,7 @@ void key_action(const char *act);
 int keys_dump(char *buf, size_t len);
 
 /* ui.c — built-in pages until the widget engine (M8) */
-enum { UI_PAGE_TEST, UI_PAGE_STATUS, UI_PAGES };
+enum { UI_PAGE_TEST, UI_PAGE_STATUS, UI_PAGE_PANEL, UI_PAGES };
 void ui_init(struct fb *f);
 int ui_page(void);
 void ui_page_set(int p);
@@ -165,6 +165,28 @@ int sensors_fd(int which);   /* 0 accelerometer, 1 hub orientation; -1 if not op
 void sensors_read(int which);
 int sensors_stats(char *buf, size_t len);
 
+/* json.c — minimal tokenizer */
+enum { J_OBJ, J_ARR, J_STR, J_PRIM };
+typedef struct { int type, start, end, size, parent; } jtok;
+int json_parse(const char *s, int len, jtok *t, int max);
+int json_skip(const jtok *t, int n, int i);
+int json_get(const char *s, const jtok *t, int n, int obj, const char *key);
+int json_str(const char *s, const jtok *t, int i, char *out, size_t len);
+double json_num(const char *s, const jtok *t, int i, double dflt);
+
+/* panel.c — PPJ/1 widget engine (PANEL mode) */
+void panel_init(struct fb *f);
+int panel_handle(const char *line, int len, char *reply, size_t rlen); /* reply: JSON line or "" */
+int panel_has_layout(void);
+void panel_draw(void);                 /* full redraw of the current panel page */
+int panel_touch(const int *ids, const int *xs, const int *ys, int n); /* 1 = consumed */
+int panel_page_step(int d);           /* 0 = moved within panel pages, 1 = wrapped out */
+void panel_tick(void);                /* once per second: clocks */
+void panel_set_event_sink(void (*fn)(const char *json));
+int net_init(void);                    /* TCP server for PPJ/1 */
+int net_fd(int which);                 /* 0 listen, 1 client */
+void net_handle(int which);
+
 /* gadget.c */
 /* Creates the gadget with GADGET_PORTS ACM functions; fills ttys[i] ("" if that port is absent).
  * Only the control port is required. */
@@ -172,6 +194,7 @@ enum { GADGET_LOG, GADGET_CTL, GADGET_SH, GADGET_PORTS };
 int gadget_setup(char ttys[GADGET_PORTS][64], struct fb *f);
 int gadget_set_mode(char m);         /* 'A' display (HID touch [+GUD]), 'B' smart (NCM) */
 char gadget_mode(void);
+void gadget_tick(void);              /* mode B self-heal (once a second) */
 const char *gadget_state(void);      /* UDC state, "configured" when a host is attached */
 int gadget_reconnect(int off_ms);    /* soft disconnect/connect */
 int gadget_hid_report(uint8_t *buf, const int *ids, const int *xs, const int *ys, const int *down, int n);

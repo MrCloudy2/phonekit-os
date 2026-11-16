@@ -79,6 +79,8 @@ int main(void) {
     ui_init(&fb);
     keys_init();
     if (hw && a.have_fb) hm_init(&fb);
+    panel_init(&fb);
+    if (hw) net_init();
     if (a.have_fb) {
         draw_test_pattern(&fb);
         logmsg("first frame at t=%ld ms", now_ms());
@@ -111,7 +113,7 @@ int main(void) {
 
     for (;;) {
         wd_beat("poll");
-        struct pollfd pfd[MAX_INPUTS + 4];
+        struct pollfd pfd[MAX_INPUTS + 6];
         int n = 0;
         for (int i = 0; i < a.nin; i++) pfd[n++] = (struct pollfd){.fd = in[i].fd, .events = POLLIN};
         int ctl_idx = -1, log_idx = -1;
@@ -125,6 +127,9 @@ int main(void) {
         }
         /* autorotate sensors: only while rotation = AUTO and the screen is on */
         if (hw && a.have_fb) sensors_set_running(store_get_int("rotation", 0) < 0 && !power_screen_off());
+        int net_idx[2] = {-1, -1};
+        for (int k = 0; k < 2; k++)
+            if (net_fd(k) >= 0) { net_idx[k] = n; pfd[n++] = (struct pollfd){.fd = net_fd(k), .events = POLLIN}; }
         int sen_idx[2] = {-1, -1};
         for (int k = 0; k < 2; k++)
             if (sensors_fd(k) >= 0) { sen_idx[k] = n; pfd[n++] = (struct pollfd){.fd = sensors_fd(k), .events = POLLIN}; }
@@ -138,6 +143,7 @@ int main(void) {
         int to_next_s = 1000 - (int)(rt.tv_nsec / 1000000) + 1;
         int timeout = touch_pending ? 100 : to_next_s;
         if (hw) {
+            gadget_tick();
             int pt = power_tick(), kt = keys_tick();
             if (kt < pt) pt = kt;
             if (pt < timeout) timeout = pt < 0 ? 0 : pt;
@@ -193,6 +199,8 @@ int main(void) {
 
         for (int k = 0; k < 2; k++)
             if (sen_idx[k] >= 0 && (pfd[sen_idx[k]].revents & POLLIN)) sensors_read(k);
+        for (int k = 0; k < 2; k++)
+            if (net_idx[k] >= 0 && pfd[net_idx[k]].revents) { wd_beat("net"); net_handle(k); }
         if (log_idx >= 0 && pfd[log_idx].revents) {
             /* a hung-up tty reports POLLIN|POLLHUP and reads EOF: reopen for a fresh one */
             if (pfd[log_idx].revents & (POLLHUP | POLLERR | POLLNVAL)) { log_port_reopen(); log_quiet_until = now_ms() + 300; }
@@ -222,15 +230,18 @@ int main(void) {
                     }
                     if (in[i].is_touch && hw && e->type == EV_SYN) power_user_activity();
                     if (in[i].is_touch && touch_event(&in[i], e)) {
-                        if (!dirty) first_syn = *e; /* oldest report in this frame = worst case */
-                        dirty = 1;
+                        /* Dispatch every report (not once per read): a down, moves and a lift
+                         * can arrive in one read, and UIs must see each state, or the lift is lost. */
+                        int consumed = hw && a.have_fb && hm_touch_frame();
+                        if (!consumed && hw && gadget_mode() == 'A') send_hid_touch();
+                        if (!consumed) {
+                            if (!dirty) first_syn = *e; /* oldest report in this flush = worst case */
+                            dirty = 1;
+                        }
                     }
                 }
             }
-            /* touch frame: menu / mouse / keyboard UIs consume it; otherwise it's a digitizer touch */
-            int consumed = dirty && hw && in[i].is_touch && a.have_fb && hm_touch_frame();
-            if (dirty && !consumed && hw && in[i].is_touch && gadget_mode() == 'A') send_hid_touch();
-            if (dirty && !consumed && a.have_fb && !(hw && hm_owner() != OWN_PAGE)) {
+            if (dirty && a.have_fb && !(hw && hm_owner() != OWN_PAGE)) {
                 wd_beat("fb_present");
                 if (fb_present(&fb)) touch_flushed(&first_syn);
             }
