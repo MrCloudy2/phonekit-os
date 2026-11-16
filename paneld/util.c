@@ -70,6 +70,10 @@ void logmsg(const char *fmt, ...) {
 
 void do_reboot(const char *why, const char *target) {
     logmsg("rebooting%s%s: %s", target ? " to " : "", target ? target : "", why);
+    /* remember why, so the next boot can say (kernel logs don't survive a trip through the ROM) */
+    char r[96];
+    snprintf(r, sizeof r, "%s%s%s @%ld", why, target ? " -> " : "", target ? target : "", (long)time(NULL));
+    if (strncmp(why, "watchdog", 8)) store_set("last_reboot", r); /* the watchdog mustn't risk blocking on storage */
     sync();
     if (getpid() != 1) { logmsg("(not PID 1, not rebooting)"); return; }
     if (target && *target)

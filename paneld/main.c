@@ -93,6 +93,11 @@ int main(void) {
 
     char ttys[GADGET_PORTS][64] = {{0}};
     if (hw) store_init(PP_STORE_PART); /* before the gadget: it holds the USB mode */
+    if (hw) {
+        const char *lr = store_get("last_reboot", "");
+        logmsg("previous reboot by paneld: %s", lr[0] ? lr : "none recorded (power loss, forced reset, ROM or kernel)");
+        if (lr[0]) store_set("last_reboot", "");
+    }
     if (hw) shell_setup();
     if (hw && gadget_setup(ttys, a.have_fb ? &fb : NULL) == 0) {
         log_port_open(ttys[GADGET_LOG]);
