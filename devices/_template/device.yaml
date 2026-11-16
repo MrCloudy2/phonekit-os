@@ -1,0 +1,61 @@
+# phonepanel device record. Mark a value `verified: true` only after testing it under phonepanel.
+schema: 0
+
+identity:
+  name: <Brand Model>
+  model: <exact model number>
+  codename: <codename>
+  soc: <SoC name>
+  soc_dir: socs/<soc>        # shared quirks
+  ram_gb:
+  battery_removable:
+
+panel:
+  resolution: [ , ]
+  type:                      # LCD / OLED
+  controller:
+
+boot:
+  unlock:                    # how, and what it wipes/trips
+  flash_tool:                # heimdall / odin / fastboot / mtkclient
+  download_mode:             # button combo
+  recovery_combo:
+  image_header_version:
+  page_size:
+  partition: recovery
+  partition_size:
+  avb:
+  ab_slots:
+
+kernel:
+  version:
+  source:                    # repo + branch, if building from source
+  prebuilt:                  # which image the kernel was imported from
+
+display:
+  api:                       # fbdev / drm
+  node:
+  format:
+  color_order_verified: false
+
+input:
+  touch: { name: , node: , max_x: , max_y: , slots: , verified: false }
+  keys: { name: , node: , codes: [] }
+
+usb:
+  udc:
+  speed:
+  gadget_configfs:
+  network_function:          # rndis / ncm (which one actually transmits)
+
+power:
+  charger:
+  charge_limit_method:       # sysfs path that stops charging
+  boots_without_battery:
+
+sensors:
+  rotation:                  # how orientation is obtained, or none
+
+quirks: []
+
+milestones:                  # e.g. M0: confirmed 2026-01-01 (<tester>)

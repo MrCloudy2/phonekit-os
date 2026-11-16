@@ -1,0 +1,17 @@
+# phonepanel M0 boot 1, 2026-11-15 (excerpt of /proc/last_kmsg after the power-key reboot)
+[    0.000000]  [0:        swapper:    0] Linux version 4.14.357-Everline-AOSP (nobody@android-build) (Android (15071444, +pgo, +bolt, +lto, +mlgo, based on r596125) clang version 22.0.2 (https://andr
+[    1.777122]  [4:  kworker/u16:4:   89] sec_bat_get_battery_info: Fail to set psy ((null))
+[    2.437254]  [6:      swapper/0:    1] Warning: unable to open an initial console.
+[    2.446037]  [4:           init:    1] paneld: phonepanel paneld dev starting (pid 1)
+[    2.476599]  [4:           init:    1] paneld: fb: id= 1080x2340 virt 1080x4680 bpp=32 stride=4320 smem=20217600
+[    2.476609]  [4:           init:    1] paneld: fb: rgba offsets r16/8 g8/8 b0/8 a24/8  67mm x 145mm  pixclock=0
+[    2.493066]  [4:           init:    1] paneld: input: event5 'sec_touchscreen' [touch]
+[    2.493093]  [4:           init:    1] paneld: input: event3 'Exynos9610-Audio Headset Jack'
+[    2.493162]  [4:           init:    1] paneld: input: event1 'grip_sensor'
+[    2.493207]  [4:           init:    1] paneld: input: event4 'gpio_keys' [power]
+[    2.493233]  [4:           init:    1] paneld: input: event2 'grip_notifier'
+[    2.493278]  [4:           init:    1] paneld: input: event0 'meta_event'
+[    2.493321]  [4:           init:    1] paneld: ready; power key reboots; auto-reboot after 300 s idle
+[   41.075839]  [3:           init:    1] paneld: rebooting: power key
+[   41.323734]  [3:           init:    1] s3c2410wdt_shutdown: watchdog is still alive
+[   41.323851]  [3:           init:    1] s3c2410wdt_shutdown: watchdog is still alive

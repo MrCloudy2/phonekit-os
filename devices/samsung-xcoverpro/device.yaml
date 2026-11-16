@@ -1,0 +1,104 @@
+# phonepanel device record (schema draft, see ROADMAP.md M15).
+# "verified: false" means it comes from docs/dumps but hasn't been confirmed under phonepanel yet.
+schema: 0
+
+identity:
+  name: Samsung Galaxy XCover Pro
+  model: SM-G715FN
+  codename: xcoverpro
+  soc: Exynos 9611 (universal9611)
+  soc_dir: socs/exynos9611
+  ram_gb: 4
+  battery_removable: true
+
+panel:
+  resolution: [1080, 2340]
+  density_dpi: 420
+  type: LCD
+  controller: Novatek NT36672A (display + touch)
+
+boot:
+  unlock: OEM unlock in developer options, then download mode long-press Vol Up (wipes, trips Knox)
+  flash_tool: heimdall
+  download_mode: Vol Up + Vol Down, plug USB
+  recovery_combo: Vol Up + Power (or `adb reboot recovery`)
+  image_header_version: 2
+  page_size: 2048
+  ramdisk_compression: gzip
+  partition: recovery
+  partition_size: 71106560
+  avb: vbmeta from the LineageOS build (algorithm NONE); bootloader unlocked
+  cmdline_from_bootimg: false   # bootloader ignores boot.img cmdline; kernel uses CONFIG_CMDLINE
+  ab_slots: false
+
+kernel:
+  version: 4.14.357 (LineageOS 24.0 universal9611, Everline)
+  source: https://github.com/MrCloudy2/android_kernel_samsung_universal9611 (branch xcoverpro-24.0)
+  prebuilt: LineageOS 24.0 recovery.img (2026-11-02 release)
+  modules: none (all built in)
+  features_seen_in_image:   # from strings in the kernel binary; verified: false
+    devtmpfs: true
+    configfs: true
+    functionfs: true
+    pstore_ramoops: true
+
+display:
+  api: fbdev            # Samsung DECON (decon_fb_*, decon_pan_display)
+  node: /dev/fb0
+  format: ARGB8888 as reported (r16 g8 b0 a24), but the panel shows it as BGR -> FB_SWAP_RB quirk
+  color_order_verified: true    # 2026-11-15, by eye (ppctl colortest): RED block looked blue before the fix
+  stride: 4320
+  virtual: [1080, 4680]    # double buffer available via pan
+  size_mm: [67, 145]
+  update_on: FBIOPAN_DISPLAY
+  partial_update: likely   # decon win_update present; check in M3
+  verified: true           # 2026-11-15, M0
+
+input:
+  touch: { name: sec_touchscreen, node: event5, max_x: 1080, max_y: 2340, slots: 10, verified: true }
+  keys: { name: gpio_keys, node: event4, codes: [VOLUMEDOWN, VOLUMEUP, POWER, 0xfc, MACRO17], power_verified: true }
+
+boot_timing:
+  bootloader_s: 4.16       # bootloader log "BOOTING TIME : 4155" (ms before "Starting kernel")
+  kernel_to_init_s: 2.45   # paneld PID 1 start, kernel timestamp
+  kernel_to_pixels_s: 2.06      # source kernel + phonepanel.cfg (LineageOS kernel: 2.48)
+  bootloader_to_pixels_s: 6.2   # 4.16 + 2.06; time spent holding the power key comes on top
+  reboot_cmd_to_serial_s: 25-30 # from `adb reboot recovery` in LineageOS (includes ROM shutdown)
+
+quirks:
+  - DECON fbdev pan never re-enables the window after a powerdown (decon_set_par is #if 0'd in
+    decon_pan_display): after unblank, force FBIOPUT_VSCREENINFO (fb_set_par) or the panel stays black
+  - DECON pan hard-codes ABGR8888: the panel shows the framebuffer as BGR (FB_SWAP_RB)
+  - sensor hub (CHUB) firmware is built into the kernel; power it on via
+    /sys/devices/platform/11980000.contexthub/poweron; device_orientation (type 27) gives rotation events
+  - LineageOS restores recovery on every boot unless persist.vendor.recovery_update=false
+  - kernel services the watchdog itself; userspace needn't touch /dev/watchdog
+  - no console device ("unable to open an initial console"); log through /dev/kmsg
+  - logs from the previous boot are in /proc/last_kmsg (contains binary; use grep -a). A forced reset
+    (Vol Down + Power) may boot recovery again, and any further boot overwrites the log, so grab it right away
+  - LineageOS is userdebug: `adb root` + dd to /dev/block/by-name/recovery flashes without download mode
+  - a kernel that hangs early bootloops into recovery even after a forced reset; only download mode recovers
+  - CONFIG_ESE_SECURE / SAMSUNG_NFC must stay on (disabling hangs boot); SM5713 flash LED needs fimc-is
+  - kernel waits for async probes before /init (async_synchronize_full): PROBE_PREFER_ASYNCHRONOUS gains nothing
+
+usb:
+  udc: 13200000.dwc3
+  speed: high-speed
+  gadget_configfs: true          # verified 2026-11-15 (paneld creates acm.gs0 → ttyGS0)
+  functions_available: [acm, ncm, rndis, ffs, mtp, ptp, midi, accessory, audio_source]  # as used by LineageOS
+  otg_host: TBD
+
+power:
+  charger: SM5713 (sysfs power_supply/sm5713-charger, battery, usb, ac, otg)
+  fuel_gauge: SM5713 (power_supply/sm5713-fuelgauge)
+  charging_without_android: works (charge_type Fast, ~33-190 mA observed under paneld)
+  charge_limit_method: TBD (M4)
+  boots_without_battery: TBD
+
+wifi:
+  chip: Samsung SCSC (S620)
+  firmware: vendor partition (wifi/*.hcf, hydra_config.sdb, platform.txt)
+  status: not started
+
+milestones:
+  M0: confirmed 2026-11-15

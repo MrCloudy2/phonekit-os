@@ -1,0 +1,162 @@
+# phonepanel
+
+**Turn an old phone into a desk touch panel. Like [phonebox](https://github.com/ersinkoc/phonebox), but it's
+an operating system, not an app.**
+
+phonebox runs as an app on top of full Android. phonepanel removes Android entirely: the phone boots a trimmed
+Linux kernel and one small native program, `paneld`, which owns the screen, touch, buttons, battery and USB.
+It boots in seconds, idles at a fraction of Android's power draw, and charges the battery only to a safe
+40–60 % window, so it can stay plugged in for years.
+
+> [!WARNING]
+> **This is not an app you install. You will unlock a bootloader and flash a modified boot image to your phone.**
+> Unlocking usually wipes the phone, can void the warranty, and on Samsung trips Knox permanently.
+> A bad flash can leave the phone stuck until you recover it from download/fastboot mode.
+> Only do this with a phone you no longer need for anything else. There is no guarantee it will work on your
+> phone, see [Who this is for](#who-this-is-for).
+
+<!-- TODO: photo of the XCover Pro on a desk in PANEL mode -->
+
+## Who this is for
+
+cleanyourtv-style projects work through settings your device already gives you. This one doesn't: it's for
+people who are comfortable with (or want to learn):
+
+- unlocking a bootloader and flashing partitions (Odin/heimdall, fastboot, mtkclient)
+- reading a kernel log when the screen stays black
+- building a kernel, or at least running a build script and reading its errors
+- recovering a phone from download mode when something goes wrong
+
+You don't need to know all of it up front. The [prompt](PROMPT.md) lets an AI coding assistant (Claude Code,
+Codex, Gemini CLI, …) do most of the work with you, step by step, and it asks before anything risky. But the
+assistant can't press the phone's buttons, and it can't promise your phone will work. **Some phones can't be
+done** (locked bootloaders, no kernel source, display stacks that need Android). Budget a weekend for a first
+port, and expect dead ends.
+
+**Freedom to change it.** Everything here is MIT licensed (kernel patches are GPL-2.0, like the kernel). Take
+it and turn it into whatever you want: a home-automation wall panel, a car dash, a synth controller, a
+dedicated keyboard. paneld is a few thousand lines of plain C with no framework to fight.
+
+## What it does
+
+One image, switchable at runtime with the phone's side buttons (or from the host):
+
+| Mode | What the phone is | Host needs |
+|---|---|---|
+| **PANEL** | A smart display: the host sends widgets (gauges, graphs, buttons, toggles, sliders, clocks), the phone draws them and sends back touches. Battery-optimized: it draws only what changes and sleeps between updates | Any program that speaks [PPJ/1](protocol/PPJ1.md) (JSON lines over TCP) |
+| **SCREEN** | A USB monitor + touchscreen (GUD display + HID digitizer), ~50 fps at 1080×2340 | Linux with the `gud` module. No driver install |
+| **MOUSE** | A trackpad | Nothing (standard HID) |
+| **KEYBOARD** | A keyboard | Nothing (standard HID) |
+| **COMBO** | Keyboard + trackpad | Nothing (standard HID) |
+| WEBCAM | planned | |
+| FLASH DRIVE | planned: mass storage for a portable debug toolkit | |
+
+Plus: rotation (auto via the phone's sensor hub, or manual) in every mode, an on-device Settings screen, a
+charge limiter and thermal guard, a watchdog, and a debug serial console over USB.
+
+**Compatibility with phonebox desktop** is on the roadmap ([M12b](ROADMAP.md)): a bridge that reads phonebox's
+dashboard config and live data and renders it natively in PANEL mode.
+
+## Status
+
+Early, working, one device. See [ROADMAP.md](ROADMAP.md) and the verification records in
+[docs/verification/](docs/verification/).
+
+| Device | SoC | Display | Touch | USB modes | Rotation | Panel protocol |
+|---|---|---|---|---|---|---|
+| Samsung Galaxy XCover Pro (SM-G715FN) | Exynos 9611 | ✅ | ✅ 10 fingers, 28 ms | ✅ | ✅ | 🟨 in progress |
+
+Want to add your phone? That's what the [porting guide](docs/porting-guide.md) and [prompt](PROMPT.md) are for.
+
+## Start here
+
+| You have… | Do this |
+|---|---|
+| A supported phone (table above) | [Install on a supported phone](#install-on-a-supported-phone) |
+| Another phone with an unlockable bootloader | Paste [PROMPT.md](PROMPT.md) into your coding assistant, or read [docs/porting-guide.md](docs/porting-guide.md) |
+| A phone with a locked bootloader (most US carrier phones, many Huawei/Xiaomi-after-2023) | Not possible, sorry. Look at phonebox instead |
+| Just curiosity | [docs/how-it-was-built.md](docs/how-it-was-built.md), the story of the first port |
+
+## Quick start with an AI assistant
+
+1. Clone this repo and open it in your coding assistant (it reads [AGENTS.md](AGENTS.md)).
+2. Paste the contents of [PROMPT.md](PROMPT.md) and tell it your phone model.
+3. Follow along. It checks whether your phone can be done before touching it, makes a known-good backup first,
+   and asks before every flash.
+
+## Install on a supported phone
+
+The safe layout: keep a normal ROM (e.g. LineageOS) on the **boot** partition and flash phonepanel to
+**recovery**. Power on → your ROM. Recovery combo (or `adb reboot recovery`) → phonepanel. Nothing about your
+ROM changes, and if phonepanel misbehaves, its watchdog reboots back to the ROM by itself.
+
+Needs on the PC (Linux): `aarch64-linux-gnu-gcc` (static glibc), `mkbootimg`/`unpack_bootimg`, `avbtool`,
+`python3`, `adb`, and `heimdall` (Samsung) or `fastboot`. For a source kernel build: `clang`/`lld`.
+
+```bash
+git clone https://github.com/<you>/phonepanel && cd phonepanel
+```
+
+```bash
+make import device=samsung-xcoverpro IMG_SRC=/path/to/your/recovery.img
+```
+
+```bash
+make device=samsung-xcoverpro
+```
+
+Then either flash from download mode (`make flash device=samsung-xcoverpro`) or, with a rooted-debugging
+userdebug ROM running, `make deploy` (dd over adb, verify, reboot into phonepanel). Talk to it:
+
+```bash
+scripts/ppctl.py --wait 90 info
+```
+
+Full details per device are in `devices/<device>/device.yaml`.
+
+## Doing it by hand
+
+| Tool | What it does |
+|---|---|
+| `make import` | Take kernel/DTB/DTBO from a known-good boot or recovery image |
+| `make` | Build paneld + initramfs + boot image (kernel prebuilt or from source: `KERNEL=source`) |
+| `make deploy` | Write the image over adb (keeps the settings area), verify sha256, reboot into it |
+| `make flash` | Flash from download/fastboot mode |
+| `make logs` | Read paneld's log from the last boot (`last_kmsg`) |
+| `make test` | Run paneld under qemu (no phone needed) |
+| `scripts/ppctl.py` | Control channel: info, screenshots, touch injection, modes, power, a shell |
+| `scripts/test-*.py` | Hardware test suites (touch, display, power, USB, keys, input modes) |
+| `host/ppj.py` | Python client for PANEL mode; `host/demo_dashboard.py` is an example |
+
+## When something goes wrong
+
+Read [docs/recovery.md](docs/recovery.md) **before** your first flash. The short version: always keep a
+known-good image of every partition you touch, know your phone's download/fastboot button combo, and never
+flash `boot` until `recovery` works.
+
+## Questions people ask
+
+**Why not just use phonebox?** If your phone runs Android fine and you're happy with that, do! phonepanel is
+for when you want instant boot, very low idle power, years of safe always-plugged charging, a USB monitor
+mode, or simply no Android.
+
+**Will it brick my phone?** A *hard* brick is very unlikely if you only flash boot/recovery and keep the
+bootloader intact. A *soft* brick (stuck on the logo) happened several times during the first port, and every
+time it was fixed by flashing the known-good image from download mode. See [docs/recovery.md](docs/recovery.md).
+
+**Windows/macOS?** PANEL, MOUSE, KEYBOARD and COMBO are standard USB/network, so they work. SCREEN mode needs
+Linux's `gud` driver for now.
+
+**Does it need a battery?** Currently yes. Battery-less boot is on the roadmap (phones with removable
+batteries make it testable).
+
+## Legal
+
+Independent project, not affiliated with or endorsed by phonebox, Samsung, Google, LineageOS, or any phone
+maker. Brand names are trademarks of their owners. This repository contains no vendor firmware or proprietary
+blobs: you import the kernel binaries from an image you already have. Unlocking and flashing may void your
+warranty. **You do this at your own risk. The software is provided "as is", without warranty of any kind.**
+
+## License
+
+[MIT](LICENSE) for everything except `devices/*/kernel-patches/` (GPL-2.0, matching the Linux kernel).

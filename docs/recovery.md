@@ -1,0 +1,45 @@
+# Recovery: read this before your first flash
+
+Nearly every problem during a port is a **soft brick**: the phone sticks on the boot logo, bootloops, or
+shows a black screen. All of them are recoverable **as long as the bootloader is intact and you have
+known-good images**. phonepanel never touches the bootloader, so keep it that way.
+
+## Before anything else
+1. **Find your emergency mode** and try it once while the phone still works:
+   - Samsung: download mode (XCover Pro: Vol Up + Vol Down while plugging in USB). Tools: `heimdall` (Linux/macOS) or Odin (Windows).
+   - Most others: fastboot (`fastboot devices`), usually Vol Down + Power.
+   - MediaTek: BROM/preloader via `mtkclient`, which works even when fastboot doesn't.
+2. **Back up every partition you will touch** and keep the copies off the phone, with sha256 sums:
+   ```bash
+   adb shell su -c 'dd if=/dev/block/by-name/recovery' > recovery-original.img
+   ```
+   ```bash
+   sha256sum recovery-original.img > recovery-original.img.sha256
+   ```
+   Better: the official image file from the same ROM build (that's what `make import` uses anyway).
+3. **Flash recovery, not boot.** Then a broken phonepanel just means "boot normally into the ROM".
+
+## Symptoms and fixes
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| ROM replaced phonepanel after one boot | ROM restores recovery (Samsung/LineageOS: `persist.vendor.recovery_update`) | `adb shell su -c 'setprop persist.vendor.recovery_update false'`, flash again |
+| Stuck on the boot logo | Kernel hangs early (often after a config trim) | Forced reset (Samsung: Vol Down + Power ~10 s), straight into download/fastboot mode, flash the known-good recovery |
+| Bootloops into recovery even after forced reset | Same, the bootloader keeps retrying recovery | Only download/fastboot mode helps: flash known-good |
+| Backlight on, picture black | Display not initialised, or wrong pan/blank handling | `make logs` from the ROM; check the device quirks in `socs/` |
+| Colours wrong (blue looks brown) | Panel byte order ≠ what fbdev reports | Set `FB_SWAP_RB := 1` in `device.mk` |
+| paneld frozen | Usually the watchdog reboots to the ROM within 15 s; else forced reset | `make logs` right away: the next boot overwrites `last_kmsg` |
+| "dm-verity"/"AVB" error, refuses to boot | Image size/footer mismatch, or a locked bootloader | Image must be exactly partition-sized with a footer (`AVB_FOOTER := 1`), bootloader must be unlocked |
+
+## Getting logs from a boot that failed
+From the ROM, right after the failed boot (before booting anything else):
+```bash
+make logs
+```
+If there is no ROM to boot into, flash the known-good recovery (TWRP/LineageOS recovery with adb) and read
+`/proc/last_kmsg` (or `/sys/fs/pstore/console-ramoops*`) from there.
+
+## Things that can cause a real (hard) brick, so don't do them
+- Flashing anything to `bootloader`, `sboot`, `abl`, `xbl`, `preloader`, `lk`, `tz`, or modem partitions.
+- Relocking the bootloader with a non-stock boot/recovery image on the phone.
+- Flashing an image built for a different model, even a "close" variant.
+- Running a phone without battery protection: always-plugged lithium cells swell. Keep the charge limiter on.

@@ -1,0 +1,12 @@
+# build outputs
+/build/
+/out/
+
+# vendor/LineageOS kernel binaries imported per device (never committed)
+/devices/*/prebuilt/
+
+# downloaded sources (busybox, kernel)
+/third_party/
+
+# per-user device overrides (local paths)
+/devices/*/local.mk
