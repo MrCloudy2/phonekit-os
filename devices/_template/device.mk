@@ -4,7 +4,7 @@
 ARCH            := arm64
 CROSS_CC        ?= aarch64-linux-gnu-gcc
 
-# Partition phonepanel is flashed to. RECOVERY keeps your ROM on boot (recommended).
+# Partition PhoneKit is flashed to. RECOVERY keeps your ROM on boot (recommended).
 TARGET_PARTITION      := RECOVERY            # heimdall partition name (Samsung) / informational otherwise
 TARGET_PARTITION_NAME := recovery            # /dev/block/by-name/<this>
 TARGET_PARTITION_SIZE := 0                   # bytes: adb shell su -c 'blockdev --getsize64 /dev/block/by-name/recovery'

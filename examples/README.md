@@ -1,6 +1,6 @@
 # Examples: things you can turn the phone into
 
-phonepanel is a base, not a product. These are starting points; fork and bend them.
+PhoneKit is a base, not a product. These are starting points; fork and bend them.
 
 | Example | Mode | Status | Where |
 |---|---|---|---|

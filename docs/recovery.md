@@ -2,7 +2,7 @@
 
 Nearly every problem during a port is a **soft brick**: the phone sticks on the boot logo, bootloops, or
 shows a black screen. All of them are recoverable **as long as the bootloader is intact and you have
-known-good images**. phonepanel never touches the bootloader, so keep it that way.
+known-good images**. PhoneKit never touches the bootloader, so keep it that way.
 
 ## Before anything else
 1. **Find your emergency mode** and try it once while the phone still works:
@@ -17,12 +17,12 @@ known-good images**. phonepanel never touches the bootloader, so keep it that wa
    sha256sum recovery-original.img > recovery-original.img.sha256
    ```
    Better: the official image file from the same ROM build (that's what `make import` uses anyway).
-3. **Flash recovery, not boot.** Then a broken phonepanel just means "boot normally into the ROM".
+3. **Flash recovery, not boot.** Then a broken PhoneKit just means "boot normally into the ROM".
 
 ## Symptoms and fixes
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| ROM replaced phonepanel after one boot | ROM restores recovery (Samsung/LineageOS: `persist.vendor.recovery_update`) | `adb shell su -c 'setprop persist.vendor.recovery_update false'`, flash again |
+| ROM replaced PhoneKit after one boot | ROM restores recovery (Samsung/LineageOS: `persist.vendor.recovery_update`) | `adb shell su -c 'setprop persist.vendor.recovery_update false'`, flash again |
 | Stuck on the boot logo | Kernel hangs early (often after a config trim) | Forced reset (Samsung: Vol Down + Power ~10 s), straight into download/fastboot mode, flash the known-good recovery |
 | Bootloops into recovery even after forced reset | Same, the bootloader keeps retrying recovery | Only download/fastboot mode helps: flash known-good |
 | Backlight on, picture black | Display not initialised, or wrong pan/blank handling | `make logs` from the ROM; check the device quirks in `socs/` |

@@ -1,4 +1,4 @@
-# phonepanel device record. Mark a value `verified: true` only after testing it under phonepanel.
+# PhoneKit device record. Mark a value `verified: true` only after testing it under PhoneKit.
 schema: 0
 
 identity:

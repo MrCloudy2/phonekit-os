@@ -1,6 +1,6 @@
 # Instructions for AI coding agents
 
-You are working on phonepanel: a minimal Linux image (vendor kernel + one static C daemon, `paneld`, as PID 1)
+You are working on PhoneKit: a minimal Linux image (vendor kernel + one static C daemon, `paneld`, as PID 1)
 that turns an old phone into a touch panel. Users flash it to real phones. Mistakes can soft-brick a phone.
 
 ## Safety rules (non-negotiable)

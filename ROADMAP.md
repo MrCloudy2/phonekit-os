@@ -1,18 +1,18 @@
-# phonepanel — Roadmap
+# PhoneKit — Roadmap
 
 > Turn any old phone with an unlockable bootloader into a quality touch panel for your
 > projects. It works like [phonebox](https://github.com/ersinkoc/phonebox) (a desk panel with
 > widgets driven by a host), but there's **no Android underneath**: just a trimmed kernel and
 > one native daemon.
 
-Working name: `phonepanel`. Reference device: **Samsung Galaxy XCover Pro** (Exynos 9611,
+Name: **PhoneKit** (repo `phonekit-os`; renamed from PhoneKit 2026-11-16). Reference device: **Samsung Galaxy XCover Pro** (Exynos 9611,
 removable battery, existing custom LineageOS build).
 
 ---
 
 ## 1. Product vision
 
-| | phonebox | phonepanel |
+| | phonebox | PhoneKit |
 |---|---|---|
 | OS on phone | Full Android 9+ | Trimmed vendor kernel + tiny initramfs |
 | UI runtime | WebView + JS | Native renderer (LVGL candidate), drawing directly to DRM/fbdev |
@@ -308,8 +308,8 @@ menu on-device, per-page key bindings.
 #### M6f · Install layouts and maintenance menu ⬜
 *Added 2026-11-16.* Recovery stays the default target (it keeps Android as a working fallback), but it is a choice.
 **Deliverables**
-- Documented layouts: **dual** (recovery: power on → ROM, combo → phonepanel), **dedicated** (boot: straight to
-  phonepanel, no ROM), **A/B slot** (devices without a recovery partition: spare slot + `fastboot set_active`).
+- Documented layouts: **dual** (recovery: power on → ROM, combo → PhoneKit), **dedicated** (boot: straight to
+  PhoneKit, no ROM), **A/B slot** (devices without a recovery partition: spare slot + `fastboot set_active`).
 - README note for technical users: in the dual layout the ROM's own recovery is gone, so **ROM OTA updates that
   install through recovery stop working**. `make restore-recovery` puts the ROM's recovery back for an update.
 - On-device maintenance menu: reboot to download/fastboot/ROM, expose a partition read-only over USB mass
@@ -458,7 +458,7 @@ by Wi-Fi, and bridges them: a pocket serial-console server / PiKVM-lite.
 - A table of supported phonebox widget types and what they map to (and what can't be mapped, e.g. WebView-only widgets).
 
 **Confirm**
-- [ ] An existing phonebox dashboard shows up on phonepanel without editing it.
+- [ ] An existing phonebox dashboard shows up on PhoneKit without editing it.
 - [ ] Live values update and buttons trigger the same host actions as on phonebox.
 - [ ] `README.md`/`examples/` describe the setup end to end.
 
@@ -570,7 +570,11 @@ Hackaday tips, Mastodon.
 | Samsung-specific boot quirks (vbmeta, Odin, Knox) | Brick risk | Document per device; always keep a known-good stock/LOS image |
 
 ## 6. Open questions
-- Project name: rename to **PhoneKit** (you build your own toolkit on your phone) before going public (name check 2026-11-16: the GitHub org and phonekit.io/.com are taken by unrelated products).
+- Internal renames left from phonepanel (do together with the next on-phone test, since they change what the host sees):
+  USB manufacturer string and `ppctl.py` port matching, KWin's saved touchscreen→monitor mapping (keyed by
+  device name), image name `phonepanel.img`, kernel fragment `phonepanel.cfg`, mDNS `_phonepanel._tcp`, boot
+  splash text. `paneld` keeps its name.
+- Name: **PhoneKit**, repo `phonekit-os` (decided 2026-11-16; the GitHub org, npm package and phonekit.io/.com belong to unrelated products).
 - Renderer: LVGL (C, mature) vs Slint (Rust) vs custom. Decide at the start of M8, after M3 power measurements.
 - `paneld` language: C vs Rust. Leaning Rust for the protocol and transports, with a C ABI for LVGL.
 - Protocol encoding: CBOR vs a custom TLV for MCU friendliness.

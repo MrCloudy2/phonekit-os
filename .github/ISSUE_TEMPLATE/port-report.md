@@ -1,6 +1,6 @@
 ---
 name: Port attempt / device report
-about: Tried phonepanel on a phone? Report what happened, including failures.
+about: Tried PhoneKit on a phone? Report what happened, including failures.
 ---
 - Model + model number:
 - SoC:

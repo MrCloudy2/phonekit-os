@@ -1,4 +1,4 @@
-# Porting guide: bringing phonepanel to a new phone
+# Porting guide: bringing PhoneKit to a new phone
 
 Plain-text version of what [PROMPT.md](../PROMPT.md) asks an AI assistant to do. Work through the stages in
 order, and don't skip a gate. Each stage ends with something you can see on the phone.

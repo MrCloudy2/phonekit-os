@@ -5,11 +5,11 @@ plug the phone into the PC, and paste everything below the line. Replace the par
 
 ---
 
-I want to run phonepanel on my phone: **<brand and exact model number, e.g. Samsung SM-G715FN>**.
+I want to run PhoneKit on my phone: **<brand and exact model number, e.g. Samsung SM-G715FN>**.
 It currently runs **<stock Android / LineageOS / …>**, and the bootloader is **<unlocked / locked / don't know>**.
 My PC runs **<Linux distro / Windows / macOS>**.
 
-You are helping me port and install phonepanel from this repository. Read `AGENTS.md`, `README.md`,
+You are helping me port and install PhoneKit from this repository. Read `AGENTS.md`, `README.md`,
 `docs/recovery.md`, `docs/porting-guide.md`, and `docs/how-it-was-built.md` first. Then follow the porting
 guide stage by stage. Rules:
 

@@ -1,9 +1,10 @@
-# phonepanel
+# PhoneKit
 
-**Turn an old phone into a desk touch panel. Like [phonebox](https://github.com/ersinkoc/phonebox), but it's
-an operating system, not an app.**
+**Turn an old phone into your own hardware toolkit: a desk touch panel, a USB monitor, a keyboard and trackpad,
+a server console, whatever you build. Like [phonebox](https://github.com/ersinkoc/phonebox), but it's an
+operating system, not an app.**
 
-phonebox runs as an app on top of full Android. phonepanel removes Android entirely: the phone boots a trimmed
+phonebox runs as an app on top of full Android. PhoneKit removes Android entirely: the phone boots a trimmed
 Linux kernel and one small native program, `paneld`, which owns the screen, touch, buttons, battery and USB.
 It boots in seconds, idles at a fraction of Android's power draw, and charges the battery only to a safe
 40–60 % window, so it can stay plugged in for years.
@@ -88,28 +89,28 @@ Want to add your phone? That's what the [porting guide](docs/porting-guide.md) a
 
 ## Install on a supported phone
 
-The safe layout: keep a normal ROM (e.g. LineageOS) on the **boot** partition and flash phonepanel to
-**recovery**. Power on → your ROM. Recovery combo (or `adb reboot recovery`) → phonepanel. Nothing about your
-ROM changes, and if phonepanel misbehaves, its watchdog reboots back to the ROM by itself. Keeping Android
+The safe layout: keep a normal ROM (e.g. LineageOS) on the **boot** partition and flash PhoneKit to
+**recovery**. Power on → your ROM. Recovery combo (or `adb reboot recovery`) → PhoneKit. Nothing about your
+ROM changes, and if PhoneKit misbehaves, its watchdog reboots back to the ROM by itself. Keeping Android
 is a feature: the phone stays a phone, and you always have a working OS to fall back to.
 
 | Layout | Power on → | Trade-off |
 |---|---|---|
-| **Dual** (recovery), default | your ROM; phonepanel via the recovery combo | Your ROM's recovery is replaced (see below) |
-| **Dedicated** (boot) | phonepanel directly | No Android left; fastest; recovering needs download/fastboot mode |
+| **Dual** (recovery), default | your ROM; PhoneKit via the recovery combo | Your ROM's recovery is replaced (see below) |
+| **Dedicated** (boot) | PhoneKit directly | No Android left; fastest; recovering needs download/fastboot mode |
 | **A/B slot** (phones without a recovery partition) | the active slot | Planned ([M6f](ROADMAP.md)) |
 
 > [!NOTE]
 > **For technical users:** in the dual layout your ROM's own recovery is gone. On non-A/B phones, ROM OTA updates
 > (LineageOS updater) install *through recovery*, so they stop working. Flash the ROM's recovery back to update,
-> then reflash phonepanel. A `make restore-recovery` helper and an on-device maintenance menu (reboot to
+> then reflash PhoneKit. A `make restore-recovery` helper and an on-device maintenance menu (reboot to
 > download mode, partition backup over USB) are planned in [M6f](ROADMAP.md).
 
 Needs on the PC (Linux): `aarch64-linux-gnu-gcc` (static glibc), `mkbootimg`/`unpack_bootimg`, `avbtool`,
 `python3`, `adb`, and `heimdall` (Samsung) or `fastboot`. For a source kernel build: `clang`/`lld`.
 
 ```bash
-git clone https://github.com/<you>/phonepanel && cd phonepanel
+git clone https://github.com/MrCloudy2/phonekit-os && cd phonekit-os
 ```
 
 ```bash
@@ -121,7 +122,7 @@ make device=samsung-xcoverpro
 ```
 
 Then either flash from download mode (`make flash device=samsung-xcoverpro`) or, with a rooted-debugging
-userdebug ROM running, `make deploy` (dd over adb, verify, reboot into phonepanel). Talk to it:
+userdebug ROM running, `make deploy` (dd over adb, verify, reboot into PhoneKit). Talk to it:
 
 ```bash
 scripts/ppctl.py --wait 90 info
@@ -151,7 +152,7 @@ flash `boot` until `recovery` works.
 
 ## Questions people ask
 
-**Why not just use phonebox?** If your phone runs Android fine and you're happy with that, do! phonepanel is
+**Why not just use phonebox?** If your phone runs Android fine and you're happy with that, do! PhoneKit is
 for when you want instant boot, very low idle power, years of safe always-plugged charging, a USB monitor
 mode, or simply no Android.
 

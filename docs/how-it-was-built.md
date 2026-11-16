@@ -11,7 +11,7 @@ the cables, and looked at the screen when a camera couldn't.
   everything after this much easier (see step 2).
 - The LineageOS `recovery.img` from that build: a known-good image containing a kernel that
   initialises the display without Android. This is the single most important ingredient. **If TWRP or a
-  LineageOS recovery shows a picture on your phone, phonepanel can too.**
+  LineageOS recovery shows a picture on your phone, PhoneKit can too.**
 
 ## 1. Boot to pixels (M0)
 - Unpack the known-good recovery image (`unpack_bootimg`). Keep its kernel, DTB and DTBO byte for byte;
