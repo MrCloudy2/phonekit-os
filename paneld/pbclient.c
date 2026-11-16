@@ -30,6 +30,11 @@
 struct blob { char *data; size_t len; };
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static struct blob in_cfg, in_state, in_art, in_wx, in_work, in_quota, in_procs;
+#define EVQ 16
+static char *evq[EVQ];            /* panel events from the stream ({"kind","data"}), oldest first */
+static int evn;
+static volatile int want_approvals; /* main loop: fetch /api/approvals */
+static struct blob in_appr;
 static volatile int want_quotas, want_procs; /* main loop: a visible/configured widget needs it */ /* latest bodies, handed to the main loop */
 static int notify_r = -1, notify_w = -1;
 static volatile int connected;
@@ -195,6 +200,7 @@ static void *side_thread(void *v) {
                 if (b.data && strstr(b.data, "\"providers\":[]")) q_at -= 50000; /* agent still collecting: retry in 10 s */
                 if (b.data) publish(&in_quota, b);
             }
+            if (want_approvals) { want_approvals = 0; struct blob b = get("/api/approvals", 1 << 20); if (b.data) publish(&in_appr, b); }
             if (want_procs && now_ms() - p_at > 3000) { p_at = now_ms(); struct blob b = get("/api/procs?top=12", 1 << 20); if (b.data) publish(&in_procs, b); }
         }
         usleep(200000);
@@ -222,6 +228,15 @@ static void *http_thread(void *v) {
             if (n < 0) break;
             if (!strncmp(line, "event: ", 7)) snprintf(ev, sizeof ev, "%s", line + 7);
             else if (!strncmp(line, "data: ", 6) && !strcmp(ev, "work")) publish(&in_work, (struct blob){strdup(line + 6), (size_t)(n - 6)});
+            else if (!strncmp(line, "data: ", 6) && !strcmp(ev, "event")) {
+                pthread_mutex_lock(&lock);
+                if (evn == EVQ) { free(evq[0]); memmove(evq, evq + 1, sizeof evq[0] * (EVQ - 1)); evn--; }
+                evq[evn++] = strdup(line + 6);
+                pthread_mutex_unlock(&lock);
+                char x = 1;
+                (void)!write(notify_w, &x, 1);
+                if (strstr(line, "\"kind\":\"refresh\"")) break; /* refetch the config */
+            }
             else if (!strncmp(line, "data: ", 6) && !strcmp(ev, "state")) {
                 n_states++;
                 long long ver = json_ll_after(line, "\"cfgVersion\":");
@@ -297,7 +312,7 @@ struct pbw {
 };
 #define PB_PAGES 8
 #define PB_W 24
-static struct { char title[32]; int n; struct pbw w[PB_W]; } pg[PB_PAGES];
+static struct { char id[32], title[32]; int n; struct pbw w[PB_W]; } pg[PB_PAGES];
 static int npg, cur, have_cfg;
 static struct { char id[32], label[40]; uint32_t color; } sc[32];
 static int nsc;
@@ -336,6 +351,10 @@ static long last_seen_ms;        /* last time the agent stream was up */
 
 static void draw_ambient(void);
 static const char *standby_mode(void);
+static void draw_overlays(void);
+static int modal(void);
+static void draw_toast(void);
+static struct { char title[64], text[160]; uint32_t col; long until; } toast;
 
 static struct fb *fb;
 static struct canvas cv;
@@ -394,6 +413,7 @@ static void load_config(const char *cfgs) {
         struct pbw *ws = pg[npg].w;
         pg[npg].n = 0;
         str(cfgs, n, j, "title", pg[npg].title, sizeof pg[npg].title);
+        str(cfgs, n, j, "id", pg[npg].id, sizeof pg[npg].id);
         int arr = json_get(cfgs, tk, n, j, "widgets");
         if (arr >= 0 && tk[arr].type == J_ARR) {
             int q = arr + 1;
@@ -446,6 +466,7 @@ static void load_config(const char *cfgs) {
     }
     if (cur >= npg) cur = 0;
     have_cfg = npg > 0;
+    want_approvals = 1;
     logmsg("phonebox: %d pages, %d shortcuts", npg, nsc);
 }
 
@@ -951,11 +972,11 @@ static void w_clock(const struct pbw *wd, int w, int h) {
 }
 
 /* hit boxes (screen coordinates) for the touch handler */
-struct hit { int x, y, w, h; char action[48]; };
+struct hit { int x, y, w, h; char action[128]; };
 #define MAXHIT 48
 static struct hit hits[MAXHIT];
 static int nhits;
-static char pressed_action[48];
+static char pressed_action[128];
 
 static void add_hit(int ox, int oy, int x, int y, int w, int h, const char *a) {
     if (nhits >= MAXHIT) return;
@@ -1292,14 +1313,17 @@ void pb_draw(void) {
     nhits = 0;
     for (int i = 0; i < pg[cur].n; i++) draw_widget(i);
     draw_dots();
+    draw_overlays();
     fb_present(fb);
 }
 
 static void redraw_types(int mask) {
     if (!visible()) return;
+    if (modal()) return; /* the approval card stays on top, untouched */
     if (gone && !strcmp(standby_mode(), "ambient")) { if (mask & (1 << T_CLOCK)) draw_ambient(); return; }
     geometry();
     for (int i = 0; i < pg[cur].n; i++) if (mask & (1 << pg[cur].w[i].type)) draw_widget(i);
+    if (toast.until > now_ms()) draw_toast();
     fb_present(fb);
 }
 
@@ -1354,6 +1378,157 @@ static void standby_tick(void) {
     }
 }
 
+/* ---------------------------------------------------------------- notifications, page switches, approvals */
+
+struct appr { char id[48], tool[40], detail[240], project[64], source[24]; long expires; };
+static struct appr ap[4];
+static int nap;
+
+static int modal(void) { return nap > 0; }
+
+static void load_approvals(const char *s) {
+    int n = json_parse(s, (int)strlen(s), tk, MAXTOK);
+    int it = n > 0 ? json_get(s, tk, n, 0, "items") : -1;
+    nap = 0;
+    if (it < 0 || tk[it].type != J_ARR) return;
+    for (int i = 0, q = it + 1; i < tk[it].size && nap < 4; i++, q = json_skip(tk, n, q)) {
+        struct appr *a = &ap[nap++];
+        str(s, n, q, "id", a->id, sizeof a->id); str(s, n, q, "tool", a->tool, sizeof a->tool);
+        str(s, n, q, "detail", a->detail, sizeof a->detail); str(s, n, q, "project", a->project, sizeof a->project);
+        str(s, n, q, "source", a->source, sizeof a->source);
+        a->expires = (long)(num(s, n, q, "expiresAt", 0) / 1000);
+    }
+    if (nap) { power_wake("approval"); logmsg("phonebox: %d approval(s) waiting", nap); }
+}
+
+static void approval_done(const char *path) {
+    const char *id = path + strlen("/api/approvals/");
+    for (int i = 0; i < nap; i++)
+        if (!strncmp(ap[i].id, id, strlen(ap[i].id)) && id[strlen(ap[i].id)] == '?') {
+            memmove(&ap[i], &ap[i + 1], sizeof ap[0] * (size_t)(nap - i - 1));
+            nap--;
+            break;
+        }
+}
+
+static void draw_toast(void) {
+    if (toast.until <= now_ms()) return;
+    int w = (int)fminf(fb->w * 0.62f, (float)P(420)), h = P(toast.title[0] && toast.text[0] ? 54 : 38);
+    if (cv_alloc(&cv, w, h) < 0) return;
+    cv_clear(&cv, BG);
+    cv_rrect(&cv, 0, 0, w, h, P(12), 0x1c2129, 255);
+    cv_rrect_stroke(&cv, 0, 0, w, h, P(12), fmaxf(1.5f, SC * 0.6f), toast.col, 120);
+    cv_rrect(&cv, P(10), P(10), P(4), h - P(20), P(2), toast.col, 255);
+    int y = toast.title[0] && toast.text[0] ? P(22) : h / 2 + P(5);
+    if (toast.title[0]) { cv_text(&cv, F_MEDIUM, P(14), P(24), y, toast.title, TEXT, 255, 0, w - P(34)); y += P(19); }
+    if (toast.text[0]) cv_text(&cv, F_REGULAR, P(13), P(24), y, toast.text, toast.title[0] ? MUTED : TEXT, 255, 0, w - P(34));
+    fb_blit(fb, &cv, (fb->w - w) / 2, fb->h - h - P(24));
+}
+
+static void draw_approval(void) {
+    struct appr *a = &ap[0];
+    int w = (int)fminf(fb->w * 0.8f, (float)P(560)), h = (int)fminf(fb->h * 0.82f, (float)P(290));
+    int ox = (fb->w - w) / 2, oy = (fb->h - h) / 2;
+    if (cv_alloc(&cv, w, h) < 0) return;
+    cv_clear(&cv, BG);
+    cv_rrect(&cv, 0, 0, w, h, P(18), 0x151a21, 255);
+    cv_rrect_stroke(&cv, 0, 0, w, h, P(18), fmaxf(1.5f, SC * 0.6f), 0xf59e0b, 140);
+    int px = P(18), y = P(30);
+    char head[64];
+    snprintf(head, sizeof head, "%s WANTS TO USE", a->source[0] ? a->source : "CLAUDE CODE");
+    for (char *c = head; *c; c++) if (*c >= 'a' && *c <= 'z') *c -= 32;
+    cv_text(&cv, F_BOLD, P(11), px, y, head, 0xf59e0b, 255, P(11) * 0.14f, w - 2 * px);
+    if (nap > 1) { char m[16]; snprintf(m, sizeof m, "1 of %d", nap); cv_text(&cv, F_REGULAR, P(11), w - px - cv_text_w(F_REGULAR, P(11), m, 0), y, m, MUTED, 255, 0, 0); }
+    y += P(30);
+    cv_text(&cv, F_MEDIUM, P(24), px, y, a->tool[0] ? a->tool : "a tool", TEXT, 255, 0, w - 2 * px);
+    y += P(10);
+    /* detail: wrapped monospace-ish lines */
+    int fs = P(13), lines = 0, maxl = (h - y - P(84)) / (int)(fs * 1.4f);
+    const char *d = a->detail;
+    char line[120];
+    while (*d && lines < maxl) {
+        int k = 0, last = -1;
+        while (d[k] && d[k] != '\n' && k < 110) {
+            snprintf(line, sizeof line, "%.*s", k + 1, d);
+            if (cv_text_w(F_MONO, fs, line, 0) > w - 2 * px - P(16)) break;
+            if (d[k] == ' ') last = k;
+            k++;
+        }
+        if (d[k] && d[k] != '\n' && last > 0) k = last + 1;
+        snprintf(line, sizeof line, "%.*s", k, d);
+        y += (int)(fs * 1.4f);
+        cv_text(&cv, F_MONO, fs, px + P(8), y, line, 0xc9d1db, 255, 0, w - 2 * px - P(8));
+        d += k ? k : 1;
+        if (*d == '\n') d++;
+        lines++;
+    }
+    if (a->project[0]) cv_text(&cv, F_REGULAR, P(12), px, h - P(74), a->project, MUTED, 255, 0, w - 2 * px);
+    int bw = (w - 3 * px) / 2, bh = P(44), by = h - bh - P(16);
+    cv_rrect(&cv, px, by, bw, bh, P(12), 0xef4444, 50);
+    cv_rrect_stroke(&cv, px, by, bw, bh, P(12), fmaxf(1.5f, SC * 0.6f), 0xef4444, 200);
+    cv_text(&cv, F_MEDIUM, P(16), px + (bw - cv_text_w(F_MEDIUM, P(16), "Deny", 0)) / 2, by + bh / 2 + P(6), "Deny", 0xfca5a5, 255, 0, 0);
+    cv_rrect(&cv, 2 * px + bw, by, bw, bh, P(12), 0x22c55e, 255);
+    cv_text(&cv, F_MEDIUM, P(16), 2 * px + bw + (bw - cv_text_w(F_MEDIUM, P(16), "Allow", 0)) / 2, by + bh / 2 + P(6), "Allow", 0x052e16, 255, 0, 0);
+    fb_blit(fb, &cv, ox, oy);
+    nhits = 0; /* only the card answers taps while it is up */
+    char act[96];
+    snprintf(act, sizeof act, "/api/approvals/%s?decision=deny", a->id);
+    add_hit(ox, oy, px, by, bw, bh, act);
+    snprintf(act, sizeof act, "/api/approvals/%s?decision=allow", a->id);
+    add_hit(ox, oy, 2 * px + bw, by, bw, bh, act);
+}
+
+static void draw_overlays(void) {
+    if (modal()) draw_approval();
+    draw_toast();
+}
+
+static int page_index(const char *want) {
+    for (int i = 0; i < npg; i++) if (!strcasecmp(pg[i].id, want) || !strcasecmp(pg[i].title, want)) return i;
+    char *e;
+    long k = strtol(want, &e, 10);
+    return *want && !*e && k >= 0 && k < npg ? (int)k : -1;
+}
+
+/* Panel events from the agent's stream: notify (webhook toast), goto (rules, webhooks), approvals. */
+static void handle_events(void) {
+    char *q[EVQ];
+    int n;
+    pthread_mutex_lock(&lock);
+    n = evn;
+    memcpy(q, evq, sizeof q[0] * (size_t)n);
+    evn = 0;
+    pthread_mutex_unlock(&lock);
+    for (int i = 0; i < n; i++) {
+        const char *s = q[i];
+        int t = json_parse(s, (int)strlen(s), tk, MAXTOK);
+        if (t < 1) { free(q[i]); continue; }
+        char kind[24];
+        str(s, t, 0, "kind", kind, sizeof kind);
+        int d = json_get(s, tk, t, 0, "data");
+        if (!strcmp(kind, "notify")) {
+            str(s, t, d, "title", toast.title, sizeof toast.title);
+            str(s, t, d, "text", toast.text, sizeof toast.text);
+            if (!toast.title[0] && !toast.text[0] && d >= 0 && tk[d].type == J_STR) json_str(s, tk, d, toast.text, sizeof toast.text);
+            char lv[16];
+            str(s, t, d, "level", lv, sizeof lv);
+            toast.col = !strcmp(lv, "error") ? 0xef4444 : !strcmp(lv, "warn") ? 0xf59e0b : !strcmp(lv, "ok") || !strcmp(lv, "success") ? 0x22c55e : 0x60a5fa;
+            double secs = num(s, t, d, "seconds", 5);
+            toast.until = now_ms() + (long)(clampf(1, (float)secs, 60) * 1000);
+            power_wake("notify");
+            logmsg("phonebox: notify '%s' '%s'", toast.title, toast.text);
+            if (visible()) { draw_toast(); fb_present(fb); }
+        } else if (!strcmp(kind, "goto")) {
+            char page[32];
+            str(s, t, d, "page", page, sizeof page);
+            int k = page_index(page);
+            logmsg("phonebox: goto '%s' -> %d", page, k);
+            if (k >= 0) { cur = k; power_wake("goto"); if (visible()) pb_draw(); }
+        } else if (!strncmp(kind, "approval", 8)) want_approvals = 1;
+        free(q[i]);
+    }
+}
+
 /* ================================================================ main-loop API */
 
 int pb_owns(void) { return have_cfg && !panel_has_layout(); } /* a PPJ/1 client's layout wins */
@@ -1363,7 +1538,8 @@ void pb_handle(void) {
     char x[64];
     while (read(notify_r, x, sizeof x) > 0) {}
     pthread_mutex_lock(&lock);
-    struct blob c = in_cfg, s = in_state, a = in_art, w = in_wx, wk = in_work, qb = in_quota, pr = in_procs;
+    struct blob c = in_cfg, s = in_state, a = in_art, w = in_wx, wk = in_work, qb = in_quota, pr = in_procs, apb = in_appr;
+    memset(&in_appr, 0, sizeof in_appr);
     memset(&in_cfg, 0, sizeof in_cfg); memset(&in_state, 0, sizeof in_state);
     memset(&in_art, 0, sizeof in_art); memset(&in_wx, 0, sizeof in_wx);
     memset(&in_work, 0, sizeof in_work); memset(&in_quota, 0, sizeof in_quota); memset(&in_procs, 0, sizeof in_procs);
@@ -1391,6 +1567,8 @@ void pb_handle(void) {
     if (wk.data) { load_work(wk.data); mask |= 1 << T_SESSIONS | 1 << T_GITHUB; }
     if (qb.data) { load_quotas(qb.data); mask |= 1 << T_QUOTAS; }
     if (pr.data) { load_procs(pr.data); mask |= 1 << T_PROCS; }
+    if (apb.data) { int had = nap; load_approvals(apb.data); free(apb.data); if ((had || nap) && visible()) full = 1; }
+    if (evn) handle_events();
     free(c.data); free(s.data); free(a.data); free(w.data); free(wk.data); free(qb.data); free(pr.data);
     if (have_cfg) standby_tick(); /* also here: with the screen off the 1 s UI tick doesn't run, data does */
     if (full) { if (visible()) pb_draw(); }
@@ -1403,6 +1581,7 @@ void pb_tick(void) {
     static long wx_at;
     if (!have_cfg) return;
     standby_tick();
+    if (toast.until && toast.until <= now_ms()) { toast.until = 0; if (visible() && !gone) { pb_draw(); return; } }
     if (now_ms() - wx_at > 15 * 60 * 1000) { wx_at = now_ms(); wx_want = 1; }
     int procs = 0;
     for (int i = 0; i < pg[cur].n; i++) procs |= pg[cur].w[i].type == T_PROCS;
@@ -1424,7 +1603,10 @@ int pb_touch(const int *ids, const int *xs, const int *ys, int n) {
         pressed_action[0] = 0;
         if (abs(dx) > fb->w / 8 && abs(dx) > abs(dy)) pb_page_step(dx < 0 ? 1 : -1);
         else {
-            if (had && xl >= pressed.x && xl < pressed.x + pressed.w && yl >= pressed.y && yl < pressed.y + pressed.h) post(pressed.action);
+            if (had && xl >= pressed.x && xl < pressed.x + pressed.w && yl >= pressed.y && yl < pressed.y + pressed.h) {
+                post(pressed.action);
+                if (!strncmp(pressed.action, "/api/approvals/", 15)) { approval_done(pressed.action); pb_draw(); return 1; }
+            }
             if (had) redraw_types(1 << T_MEDIA | 1 << T_SHORTCUTS);
         }
         return 1;
