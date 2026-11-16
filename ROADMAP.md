@@ -320,7 +320,8 @@ menu on-device, per-page key bindings.
 - [ ] Each layout installed and reverted on at least one device; ROM OTA works after `restore-recovery`.
 - [ ] Partition backup over USB matches the on-device sha256.
 
-#### M6g · RESCUE mode: console for headless servers ⬜
+#### M6g · RESCUE mode: console for headless servers 🟨
+*2026-11-16: terminal + on-screen keyboard on the console port work (`docs/rescue.md`, `docs/verification/M6g.md`); bootstrap macro and SSH-over-USB next.*
 *Added 2026-11-16.* The phone as a crash cart for a server that lost its network.
 **Deliverables**
 - Composite gadget: **HID keyboard + CDC-ACM serial + USB network** at once. CDC-ACM and RNDIS/NCM are in

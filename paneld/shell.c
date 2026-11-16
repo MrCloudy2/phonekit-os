@@ -69,6 +69,13 @@ void shell_start(const char *tty) {
     logmsg("shell: busybox sh on %s (pid %d)", sh_tty, sh_pid);
 }
 
+static int sh_paused;
+
+void shell_pause(int on) {
+    sh_paused = on;
+    if (on && sh_pid > 0) { kill(-sh_pid, SIGHUP); kill(sh_pid, SIGKILL); }
+}
+
 void shell_reap(void) {
     int status;
     pid_t p;
@@ -77,5 +84,5 @@ void shell_reap(void) {
             sh_pid = -1;
             sh_next_ms = now_ms() + 1000; /* don't spin if the tty is dead */
         }
-    if (sh_tty[0] && sh_pid < 0 && now_ms() >= sh_next_ms) spawn();
+    if (sh_tty[0] && sh_pid < 0 && !sh_paused && now_ms() >= sh_next_ms) spawn();
 }

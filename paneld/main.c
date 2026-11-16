@@ -75,6 +75,7 @@ int main(void) {
     a.fb = &fb;
     a.have_fb = (hw || fbpath) && fb_open(&fb, hw ? NULL : fbpath) == 0;
     touch_init(&fb);
+    if (hw) store_init(PP_STORE_PART); /* first: power, keys, modes and the gadget read their settings from it */
     if (hw) power_init(a.have_fb ? &fb : NULL);
     ui_init(&fb);
     keys_init();
@@ -92,7 +93,6 @@ int main(void) {
     a.nin = (hw || getenv("PANELD_INPUT")) ? inputs_open(in, MAX_INPUTS) : 0;
 
     char ttys[GADGET_PORTS][64] = {{0}};
-    if (hw) store_init(PP_STORE_PART); /* before the gadget: it holds the USB mode */
     if (hw) {
         const char *lr = store_get("last_reboot", "");
         logmsg("previous reboot by paneld: %s", lr[0] ? lr : "none recorded (power loss, forced reset, ROM or kernel)");
@@ -103,7 +103,7 @@ int main(void) {
         log_port_open(ttys[GADGET_LOG]);
         ctl_open(ttys[GADGET_CTL]);
         shell_start(ttys[GADGET_SH]);
-        if (a.have_fb) pb_init(&fb);
+        if (a.have_fb) { pb_init(&fb); term_init(&fb); }
     } else if (getenv("PANELD_CTL")) ctl_open(getenv("PANELD_CTL")); /* testing: a pty */
 
     if (!a.have_fb && hw && ctl_fd() < 0) {
@@ -136,6 +136,13 @@ int main(void) {
         int net_idx[2] = {-1, -1};
         for (int k = 0; k < 2; k++)
             if (net_fd(k) >= 0) { net_idx[k] = n; pfd[n++] = (struct pollfd){.fd = net_fd(k), .events = POLLIN}; }
+        /* RESCUE takes the shell port while that mode is selected (also behind the menu) */
+        if (hw && a.have_fb) {
+            int want = gadget_mode() == 'A' && hm_input_mode() == IN_RESCUE;
+            if (want != term_active()) term_activate(want, ttys[GADGET_SH]);
+        }
+        int term_idx = -1;
+        if (term_fd() >= 0) { term_idx = n; pfd[n++] = (struct pollfd){.fd = term_fd(), .events = POLLIN}; }
         int pb_idx = -1;
         if (pb_fd() >= 0) { pb_idx = n; pfd[n++] = (struct pollfd){.fd = pb_fd(), .events = POLLIN}; }
         int adb_idx = -1;
@@ -212,6 +219,7 @@ int main(void) {
         for (int k = 0; k < 2; k++)
             if (net_idx[k] >= 0 && pfd[net_idx[k]].revents) { wd_beat("net"); net_handle(k); }
         if (pb_idx >= 0 && (pfd[pb_idx].revents & POLLIN)) { wd_beat("phonebox"); pb_handle(); }
+        if (term_idx >= 0 && pfd[term_idx].revents) { wd_beat("rescue"); term_read(); }
         if (adb_idx >= 0 && (pfd[adb_idx].revents & POLLIN)) {
             /* the phonebox agent's adb commands: input keyevent WAKEUP/SLEEP/POWER, am start (open the panel) */
             for (int c; (c = adbd_notify_read());) {

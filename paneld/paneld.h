@@ -49,7 +49,7 @@ int fb_stats(struct fb *f, char *buf, size_t len);
 void fb_damage_rect(struct fb *f, int x0, int y0, int w, int h); /* LOGICAL rect */
 
 /* gfx.c — anti-aliased drawing (PHONEBOX look): canvases are 0xRRGGBB, logical orientation */
-enum { F_LIGHT, F_REGULAR, F_MEDIUM, F_BOLD, GFX_FONTS };
+enum { F_LIGHT, F_REGULAR, F_MEDIUM, F_BOLD, F_MONO, GFX_FONTS };
 struct canvas { int w, h; size_t cap; uint32_t *px; };
 void gfx_init(void);
 int cv_alloc(struct canvas *c, int w, int h);
@@ -165,7 +165,7 @@ void gud_set_workers(int n);
 void gud_set_visible(int v); /* hidden: frames go to a shadow copy, restored on show */
 
 /* hid_modes.c — phone modes (PANEL/SCREEN/MOUSE/KEYBOARD/COMBO), menu, screen ownership */
-enum { IN_TOUCHSCREEN, IN_TRACKPAD, IN_KEYBOARD, IN_COMBO, IN_MODES };
+enum { IN_TOUCHSCREEN, IN_TRACKPAD, IN_KEYBOARD, IN_COMBO, IN_RESCUE, IN_MODES };
 enum { OWN_PAGE, OWN_GUD, OWN_INPUT, OWN_MENU };
 void hm_init(struct fb *f);
 int hm_owner(void);
@@ -255,7 +255,20 @@ void log_port_reopen(void); /* after a hangup */
 /* shell.c — busybox shell on the second ACM port, respawned when it exits */
 void shell_setup(void);                 /* busybox --install, if /bin/busybox exists */
 void shell_start(const char *tty);
-void shell_reap(void);                  /* call often: reaps all children (we are PID 1) */
+void shell_reap(void);
+void shell_pause(int on);              /* RESCUE: stop the debug shell and keep its port free (1), or bring it back (0) */
+
+/* term.c — RESCUE mode: terminal for a server's serial console on the shell port */
+void term_init(struct fb *f);
+void term_activate(int on, const char *console_tty);
+int term_active(void);
+int term_fd(void);
+void term_read(void);
+void term_draw(void);
+void term_toggle_keyboard(void);
+int term_touch(const int *ids, const int *xs, const int *ys, int n);
+int term_stats(char *b, size_t len);
+void term_type(const char *s);                  /* call often: reaps all children (we are PID 1) */
 
 /* ctl.c — control channel on the ACM tty */
 struct app {

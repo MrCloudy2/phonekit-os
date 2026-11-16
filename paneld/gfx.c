@@ -22,12 +22,12 @@
 #pragma GCC diagnostic pop
 
 /* fonts embedded by the Makefile (build/fonts.c, from assets/fonts) */
-extern const unsigned char font_light[], font_regular[], font_medium[], font_bold[];
+extern const unsigned char font_light[], font_regular[], font_medium[], font_bold[], font_mono[];
 static stbtt_fontinfo fonts[GFX_FONTS];
 static int fonts_ok;
 
 void gfx_init(void) {
-    const unsigned char *src[GFX_FONTS] = {font_light, font_regular, font_medium, font_bold};
+    const unsigned char *src[GFX_FONTS] = {font_light, font_regular, font_medium, font_bold, font_mono};
     fonts_ok = 1;
     for (int i = 0; i < GFX_FONTS; i++)
         if (!stbtt_InitFont(&fonts[i], src[i], stbtt_GetFontOffsetForIndex(src[i], 0))) fonts_ok = 0;

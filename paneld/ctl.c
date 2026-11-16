@@ -501,6 +501,21 @@ static void dispatch(struct app *a, char *l, size_t len) {
         ok(NULL);
     } else if (!strcmp(c, "phonebox") && argc > 2 && !strcmp(argv[1], "page")) {
         if (pb_page_set(atoi(argv[2])) < 0) err("no such phonebox page"); else ok(NULL);
+    } else if (!strcmp(c, "rescue")) {
+        /* rescue | rescue type <text…> (raw line after "type ", \r appended) */
+        if (argc > 1 && !strcmp(argv[1], "type")) {
+            const char *t = strstr(l_raw, "type ");
+            static char b3[1024];
+            const char *x = t ? t + 5 : "";
+            size_t xl = strlen(x);
+            if (xl >= 2 && x[0] == '"' && x[xl - 1] == '"') { x++; xl -= 2; } /* ppctl keeps the quotes */
+            snprintf(b3, sizeof b3, "%.*s\r", (int)xl, x);
+            term_type(b3);
+        }
+        char b2[512];
+        int n2 = term_stats(b2, sizeof b2);
+        data(b2, n2);
+        ok(NULL);
     } else if (!strcmp(c, "adb") || !strcmp(c, "phonebox")) {
         char b2[512];
         int n2 = c[0] == 'a' ? adbd_stats(b2, sizeof b2) : pb_stats(b2, sizeof b2);

@@ -374,13 +374,13 @@ int gadget_set_mode(char m) {
     /* Mode B (PHONEBOX) carries adb: present the generic "rndis,adb" Android ID (as postmarketOS/PinePhone do)
      * so stock udev rules give the user's adb access without extra setup. */
     int with_adb = m == 'B' && adbd_ready();
-    wr("idVendor", m == 'A' && gud_ready() ? "0x1d50" : with_adb ? "0x18d1" : "0x1d6b");
-    wr("idProduct", m == 'A' && gud_ready() ? "0x614d" : with_adb ? "0x4ee4" : "0x0104");
+    wr("idVendor", m == 'A' && gud_ready() && hm_input_mode() != IN_RESCUE ? "0x1d50" : with_adb ? "0x18d1" : "0x1d6b");
+    wr("idProduct", m == 'A' && gud_ready() && hm_input_mode() != IN_RESCUE ? "0x614d" : with_adb ? "0x4ee4" : "0x0104");
     if (dhcpd_pid > 0) { kill(dhcpd_pid, SIGTERM); dhcpd_pid = -1; }
     if (m == 'A' && hid_fn) link_function(hid_fn);
     if (m == 'A' && mouse_fn) link_function(mouse_fn);
     if (m == 'A' && kbd_fn) link_function(kbd_fn);
-    if (m == 'A' && gud_ready()) link_function("ffs.gud");
+    if (m == 'A' && gud_ready() && hm_input_mode() != IN_RESCUE) link_function("ffs.gud");
     if (m == 'B' && ncm_fn) link_function(ncm_fn);
     if (with_adb) link_function("ffs.adb");
     if (wr("UDC", udc) < 0) return -1;
