@@ -344,7 +344,8 @@ menu on-device, per-page key bindings.
 
 ### Phase 3: Widgets in the image
 
-#### M8 · Widget engine ⬜
+#### M8 · Widget engine ✅
+*2026-11-16: two engines instead of one: the PPJ/1 engine (`paneld/panel.c`, any host) and the native phonebox renderer (`paneld/gfx.c` + `pbclient.c`: Roboto via stb_truetype, anti-aliased cards, sparklines, images). LVGL wasn't needed. Damage tracking per widget; measured 0.9 % CPU on a live page (M12b).*
 **Deliverables**
 - Widget engine in `paneld`. Evaluate LVGL (DRM/fbdev + evdev drivers, dirty-area
   rendering, small footprint) against a custom engine.
@@ -360,7 +361,8 @@ menu on-device, per-page key bindings.
 - [ ] RAM usage of `paneld` with a full dashboard stays **< 64 MB**.
 - [ ] Layout survives a reboot and appears **< 5 s** after power-on with the last-known data.
 
-#### M9 · Standalone widgets (no host required) ⬜
+#### M9 · Standalone widgets (no host required) 🟨
+*2026-11-17: what exists without a host: the ambient clock (M4b), the status page, RESCUE. Still to do: keeping the last PPJ/phonebox page on screen across reboots, timers/stopwatch on-device.*
 **Deliverables**
 - Widgets that work offline from on-device data: clock, battery, uptime, local sensors if available.
 - Optional (once Wi-Fi works): weather, RSS/HN, exchange rates, Home Assistant entities.
@@ -441,7 +443,8 @@ by Wi-Fi, and bridges them: a pocket serial-console server / PiKVM-lite.
 
 ### Phase 5: Seamless host integration (the phonebox experience)
 
-#### M12 · Host agent ⬜
+#### M12 · Host agent ✅ (replaced)
+*2026-11-16: replaced by M12b: the stock phonebox agent (Windows/Linux/macOS) is the host agent; PhoneKit speaks its protocol. Custom hosts use PPJ/1 (`host/ppj.py`).*
 **Deliverables**
 - `panel-agent` for Linux, Windows and macOS (single static binary; Rust or Go candidate).
 - Auto-detects the panel over USB (Mode B) and the LAN (mDNS); zero-config on USB.
@@ -477,7 +480,8 @@ works unmodified. (A bridge in our own host agent, the first plan, isn't needed.
 - [ ] Every default-template widget type drawn natively.
 - [x] `README.md` describes the setup.
 
-#### M13 · Layout editor ⬜
+#### M13 · Layout editor ✅ (replaced)
+*2026-11-16: phonebox's own browser editor (settings page of its agent) edits the pages PhoneKit shows; edits appear on the phone in about a second (config version change → refetch).*
 **Deliverables**
 - Browser-based editor served by the agent: drag widgets onto the grid, bind data sources, set themes.
 - Live preview on the phone while editing.
