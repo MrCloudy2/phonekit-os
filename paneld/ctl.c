@@ -566,8 +566,11 @@ static void dispatch(struct app *a, char *l, size_t len) {
         ok(NULL);
     } else if (!strcmp(c, "store")) {
         /* store | store set <key> <value> */
+        /* store | store set <key> <value> | store unset <key> */
         if (argc > 3 && !strcmp(argv[1], "set")) {
             if (store_set(argv[2], argv[3]) < 0) { err("store write failed"); return; }
+        } else if (argc > 2 && !strcmp(argv[1], "unset")) {
+            if (store_set(argv[2], "") < 0) { err("store write failed"); return; }
         }
         static char b[8192];
         int n = store_dump(b, sizeof b);

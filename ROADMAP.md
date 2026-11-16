@@ -383,7 +383,8 @@ menu on-device, per-page key bindings.
 - [ ] Wi-Fi power-save enabled; idle power with Wi-Fi connected is measured and recorded.
 - [ ] Discoverable from the host via mDNS within 10 s of boot.
 
-#### M11 · Secure pairing and Mode B over Wi-Fi ⬜
+#### M11 · Secure pairing and Mode B over Wi-Fi 🟨
+*2026-11-17: PHONEBOX pairs over USB and streams over TLS with the agent's pinned certificate + token (`docs/verification/M11.md`); same-network run pending. PPJ/1 over Wi-Fi still USB-only until it gets pairing too.*
 **Deliverables**
 - QR-code pairing shown on the panel; pinned TLS plus a shared key (same model as phonebox).
 - The Mode B protocol over TCP/TLS (and optionally WebSocket for browser clients).

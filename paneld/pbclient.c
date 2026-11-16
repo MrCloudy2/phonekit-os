@@ -10,6 +10,7 @@
 #include "paneld.h"
 
 #include <arpa/inet.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <math.h>
 #include <netinet/in.h>
@@ -21,6 +22,8 @@
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
+
+#include <bearssl.h>
 
 #define AGENT_PORT 8765
 #define APP_VERSION "99.0.0" /* never older than the agent's APK: no update offers to a phone without Android */
@@ -44,26 +47,114 @@ static char wx_query[256];               /* lat/lon from the config */
 static long long cfg_version;
 static unsigned long n_states, n_cfgs, n_posts;
 
-struct conn { int fd; char buf[8192]; int len, pos; int chunked; long remain; };
+/* Route to the agent: USB (plain HTTP through the adb reverse tunnel to 127.0.0.1:8765) or Wi-Fi (HTTPS to the
+ * PC's address, the agent's self-signed certificate pinned by its SHA-256 fingerprint, plus the bearer token): the
+ * same two routes as the phonebox app (AgentLink.kt). The Wi-Fi details come from /api/pair over USB ("pairing"). */
+struct route { int wifi; uint32_t ip; int port; char token[96]; unsigned char fp[32]; };
+static pthread_mutex_t rlock = PTHREAD_MUTEX_INITIALIZER;
+static struct route cur_route;
+static volatile int route_wifi;  /* for stats */
+
+/* X.509 "engine" that trusts exactly one certificate: the leaf whose SHA-256 is the pinned fingerprint. */
+struct pin_ctx {
+    const br_x509_class *vtable;
+    br_sha256_context sha;
+    br_x509_decoder_context dec;
+    unsigned char want[32];
+    int depth, ok;
+};
+static void pin_start_chain(const br_x509_class **ctx, const char *server_name) { (void)server_name; ((struct pin_ctx *)(void *)ctx)->depth = 0; }
+static void pin_start_cert(const br_x509_class **ctx, uint32_t length) {
+    struct pin_ctx *p = (struct pin_ctx *)(void *)ctx;
+    (void)length;
+    if (p->depth == 0) { br_sha256_init(&p->sha); br_x509_decoder_init(&p->dec, NULL, NULL); }
+}
+static void pin_append(const br_x509_class **ctx, const unsigned char *buf, size_t len) {
+    struct pin_ctx *p = (struct pin_ctx *)(void *)ctx;
+    if (p->depth == 0) { br_sha256_update(&p->sha, buf, len); br_x509_decoder_push(&p->dec, buf, len); }
+}
+static void pin_end_cert(const br_x509_class **ctx) { ((struct pin_ctx *)(void *)ctx)->depth++; }
+static unsigned pin_end_chain(const br_x509_class **ctx) {
+    struct pin_ctx *p = (struct pin_ctx *)(void *)ctx;
+    unsigned char got[32];
+    br_sha256_out(&p->sha, got);
+    p->ok = !memcmp(got, p->want, 32) && br_x509_decoder_last_error(&p->dec) == 0 && br_x509_decoder_get_pkey(&p->dec);
+    return p->ok ? 0 : BR_ERR_X509_NOT_TRUSTED;
+}
+static const br_x509_pkey *pin_get_pkey(const br_x509_class *const *ctx, unsigned *usages) {
+    struct pin_ctx *p = (struct pin_ctx *)(void *)ctx;
+    if (usages) *usages = BR_KEYTYPE_KEYX | BR_KEYTYPE_SIGN;
+    return p->ok ? br_x509_decoder_get_pkey(&p->dec) : NULL;
+}
+static const br_x509_class pin_vtable = {sizeof(struct pin_ctx), pin_start_chain, pin_start_cert, pin_append, pin_end_cert, pin_end_chain, pin_get_pkey};
+
+struct conn {
+    int fd; char buf[8192]; int len, pos; int chunked; long remain;
+    int tls;
+    br_ssl_client_context *sc; br_x509_minimal_context *xm; struct pin_ctx *pin; br_sslio_context io; unsigned char *iobuf;
+    char auth[128];
+};
+
+static int sock_read(void *ctx, unsigned char *buf, size_t len) {
+    for (;;) { ssize_t n = read(*(int *)ctx, buf, len); if (n > 0) return (int)n; if (n < 0 && errno == EINTR) continue; return -1; }
+}
+static int sock_write(void *ctx, const unsigned char *buf, size_t len) {
+    for (;;) { ssize_t n = send(*(int *)ctx, buf, len, MSG_NOSIGNAL); if (n > 0) return (int)n; if (n < 0 && errno == EINTR) continue; return -1; }
+}
+
+static void conn_close(struct conn *c) {
+    if (c->tls && c->sc) br_sslio_close(&c->io);
+    if (c->fd >= 0) close(c->fd);
+    c->fd = -1;
+    free(c->sc); free(c->xm); free(c->pin); free(c->iobuf);
+    c->sc = NULL; c->xm = NULL; c->pin = NULL; c->iobuf = NULL;
+}
 
 static int conn_open(struct conn *c) {
     memset(c, 0, sizeof *c);
+    pthread_mutex_lock(&rlock);
+    struct route r = cur_route;
+    pthread_mutex_unlock(&rlock);
     c->fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (c->fd < 0) return -1;
-    struct sockaddr_in sa = {.sin_family = AF_INET, .sin_port = htons(AGENT_PORT), .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+    struct sockaddr_in sa = {.sin_family = AF_INET, .sin_port = htons((uint16_t)(r.wifi ? r.port : AGENT_PORT)),
+                             .sin_addr.s_addr = r.wifi ? htonl(r.ip) : htonl(INADDR_LOOPBACK)};
     struct timeval tv = {15, 0};
     setsockopt(c->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+    setsockopt(c->fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
     int one = 1;
     setsockopt(c->fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
     if (connect(c->fd, (struct sockaddr *)&sa, sizeof sa) < 0) { close(c->fd); c->fd = -1; return -1; }
+    if (!r.wifi) return 0;
+    c->tls = 1;
+    snprintf(c->auth, sizeof c->auth, "Authorization: Bearer %s\r\n", r.token);
+    c->sc = calloc(1, sizeof *c->sc); c->xm = calloc(1, sizeof *c->xm); c->pin = calloc(1, sizeof *c->pin);
+    c->iobuf = malloc(BR_SSL_BUFSIZE_BIDI);
+    if (!c->sc || !c->xm || !c->pin || !c->iobuf) { conn_close(c); return -1; }
+    br_ssl_client_init_full(c->sc, c->xm, NULL, 0);
+    c->pin->vtable = &pin_vtable;
+    memcpy(c->pin->want, r.fp, 32);
+    br_ssl_engine_set_x509(&c->sc->eng, &c->pin->vtable);
+    br_ssl_engine_set_buffer(&c->sc->eng, c->iobuf, BR_SSL_BUFSIZE_BIDI, 1);
+    if (!br_ssl_client_reset(c->sc, NULL, 0)) { conn_close(c); return -1; }
+    br_sslio_init(&c->io, &c->sc->eng, sock_read, &c->fd, sock_write, &c->fd);
+    return 0;
+}
+
+static int conn_send(struct conn *c, const char *b, size_t n) {
+    if (!c->tls) return send(c->fd, b, n, MSG_NOSIGNAL) == (ssize_t)n ? 0 : -1;
+    if (br_sslio_write_all(&c->io, b, n) < 0 || br_sslio_flush(&c->io) < 0) {
+        logmsg("phonebox: TLS error %d", br_ssl_engine_last_error(&c->sc->eng));
+        return -1;
+    }
     return 0;
 }
 
 static int raw_getc(struct conn *c) {
     if (c->pos >= c->len) {
-        ssize_t n = recv(c->fd, c->buf, sizeof c->buf, 0);
+        int n = c->tls ? br_sslio_read(&c->io, c->buf, sizeof c->buf) : (int)recv(c->fd, c->buf, sizeof c->buf, 0);
         if (n <= 0) return -1;
-        c->len = (int)n; c->pos = 0;
+        c->len = n; c->pos = 0;
     }
     return (unsigned char)c->buf[c->pos++];
 }
@@ -110,11 +201,11 @@ static int request(struct conn *c, const char *method, const char *path) {
     char rq[1024];
     int n = snprintf(rq, sizeof rq,
                      "%s %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nX-PhoneBox-App: %s\r\nX-PhoneBox-Device: phonekit0001\r\n"
-                     "X-PhoneBox-Model: PhoneKit\r\nAccept: */*\r\nConnection: close\r\n%s\r\n",
-                     method, path, AGENT_PORT, APP_VERSION, !strcmp(method, "POST") ? "Content-Length: 0\r\n" : "");
-    if (n >= (int)sizeof rq || send(c->fd, rq, (size_t)n, MSG_NOSIGNAL) != n) { close(c->fd); c->fd = -1; return -1; }
+                     "X-PhoneBox-Model: PhoneKit\r\n%sAccept: */*\r\nConnection: close\r\n%s\r\n",
+                     method, path, AGENT_PORT, APP_VERSION, c->auth, !strcmp(method, "POST") ? "Content-Length: 0\r\n" : "");
+    if (n >= (int)sizeof rq || conn_send(c, rq, (size_t)n) < 0) { conn_close(c); return -1; }
     char l[512];
-    if (raw_line(c, l, sizeof l) < 0) { close(c->fd); c->fd = -1; return -1; }
+    if (raw_line(c, l, sizeof l) < 0) { conn_close(c); return -1; }
     int code = 0;
     sscanf(l, "HTTP/%*s %d", &code);
     c->remain = -1;
@@ -141,7 +232,7 @@ static struct blob get(const char *path, size_t max) {
     struct conn c;
     struct blob b = {0};
     if (request(&c, "GET", path) == 200) b = read_body(&c, max);
-    if (c.fd >= 0) close(c.fd);
+    conn_close(&c);
     return b;
 }
 
@@ -208,22 +299,98 @@ static void *side_thread(void *v) {
     return NULL;
 }
 
+/* ---------------------------------------------------------------- pairing (Wi-Fi route) */
+
+static int hexbyte(const char *h) {
+    int v = 0;
+    for (int i = 0; i < 2; i++) {
+        char c = h[i];
+        v = v * 16 + (c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1000);
+    }
+    return v;
+}
+
+/* Over USB: fetch /api/pair and remember how to reach this PC over Wi-Fi (the agent's "Wi-Fi & Tailscale"
+ * setting must be on). Stored in the settings store; the token is masked in dumps. */
+static void pair_over_usb(void) {
+    struct blob b = get("/api/pair", 64 * 1024);
+    if (!b.data) return;
+    static jtok t[512];
+    int n = json_parse(b.data, (int)b.len, t, 512);
+    char en[8] = "", tok[96] = "", fp[80] = "", hosts[256] = "", port[8] = "";
+    if (n > 0) {
+        json_str(b.data, t, json_get(b.data, t, n, 0, "enabled"), en, sizeof en);
+        json_str(b.data, t, json_get(b.data, t, n, 0, "token"), tok, sizeof tok);
+        json_str(b.data, t, json_get(b.data, t, n, 0, "fingerprint"), fp, sizeof fp);
+        json_str(b.data, t, json_get(b.data, t, n, 0, "port"), port, sizeof port);
+        int h = json_get(b.data, t, n, 0, "hosts");
+        size_t o = 0;
+        if (h >= 0 && t[h].type == J_ARR)
+            for (int i = 0, q = h + 1; i < t[h].size && o + 20 < sizeof hosts; i++, q = json_skip(t, n, q)) {
+                char ip[24];
+                json_str(b.data, t, q, ip, sizeof ip);
+                o += (size_t)snprintf(hosts + o, sizeof hosts - o, "%s%s", o ? "," : "", ip);
+            }
+    }
+    free(b.data);
+    if (strcmp(en, "true") || strlen(fp) != 64 || !tok[0] || !hosts[0]) return; /* Wi-Fi off on the PC: keep what we had */
+    if (strcmp(store_get("pb.fp", ""), fp) || strcmp(store_get("pb.hosts", ""), hosts) || strcmp(store_get("pb.token", ""), tok)) {
+        store_set("pb.fp", fp); store_set("pb.hosts", hosts); store_set("pb.port", port); store_set("pb.token", tok);
+        logmsg("phonebox: paired for Wi-Fi (%s, port %s)", hosts, port);
+    }
+}
+
+/* Picks the route for the next connection: USB when the tunnel is up (unless pb.route=wifi forces Wi-Fi for
+ * tests), else the paired PC over Wi-Fi, trying its addresses in turn. Returns 0 if there is no route. */
+static int pick_route(int attempt) {
+    struct route r = {0};
+    int usb = adbd_reverse_active(AGENT_PORT);
+    int force = !strcmp(store_get("pb.route", ""), "wifi");
+    const char *fp = store_get("pb.fp", ""), *hosts = store_get("pb.hosts", ""), *tok = store_get("pb.token", "");
+    if (usb && !force) r.wifi = 0;
+    else if (strlen(fp) == 64 && hosts[0] && tok[0]) {
+        r.wifi = 1;
+        r.port = atoi(store_get("pb.port", "8766"));
+        snprintf(r.token, sizeof r.token, "%s", tok);
+        for (int i = 0; i < 32; i++) r.fp[i] = (unsigned char)hexbyte(fp + 2 * i);
+        /* addresses: "a,b,c" -> pick attempt % count */
+        char hs[256];
+        snprintf(hs, sizeof hs, "%s", hosts);
+        int cnt = 0;
+        char *list[8], *save = NULL;
+        for (char *h = strtok_r(hs, ",", &save); h && cnt < 8; h = strtok_r(NULL, ",", &save)) list[cnt++] = h;
+        if (!cnt) return 0;
+        struct in_addr a;
+        if (!inet_aton(list[attempt % cnt], &a)) return 0;
+        r.ip = ntohl(a.s_addr);
+    } else return 0;
+    pthread_mutex_lock(&rlock);
+    cur_route = r;
+    pthread_mutex_unlock(&rlock);
+    route_wifi = r.wifi;
+    return 1;
+}
+
 static void *http_thread(void *v) {
     (void)v;
     char *line = malloc(256 * 1024);
+    int attempt = 0;
     for (;;) {
-        if (!adbd_reverse_active(AGENT_PORT)) { connected = 0; sleep(1); continue; }
+        if (!pick_route(attempt)) { connected = 0; sleep(1); continue; }
+        if (!route_wifi) pair_over_usb();
         struct blob cfg = get("/api/config", 4 << 20);
-        if (!cfg.data) { connected = 0; sleep(2); continue; }
+        if (!cfg.data) { connected = 0; attempt++; sleep(route_wifi ? 3 : 2); continue; }
         cfg_version = json_ll_after(cfg.data, "\"version\":");
         n_cfgs++;
         publish(&in_cfg, cfg);
         struct conn c;
-        if (request(&c, "GET", "/api/stream") != 200) { if (c.fd >= 0) close(c.fd); sleep(2); continue; }
+        if (request(&c, "GET", "/api/stream") != 200) { conn_close(&c); sleep(2); continue; }
         connected = 1;
-        logmsg("phonebox: live stream open (config v%lld)", cfg_version);
+        logmsg("phonebox: live stream open over %s (config v%lld)", route_wifi ? "Wi-Fi (TLS, pinned)" : "USB", cfg_version);
         char ev[32] = "message";
+        long opened = now_ms();
         for (;;) {
+            if (route_wifi && adbd_reverse_active(AGENT_PORT) && strcmp(store_get("pb.route", ""), "wifi") && now_ms() - opened > 3000) break; /* cable back: USB wins */
             int n = body_line(&c, line, 256 * 1024);
             if (n < 0) break;
             if (!strncmp(line, "event: ", 7)) snprintf(ev, sizeof ev, "%s", line + 7);
@@ -244,7 +411,7 @@ static void *http_thread(void *v) {
                 if (ver > 0 && ver != cfg_version) break; /* layout edited on the PC: refetch */
             } else if (!n) snprintf(ev, sizeof ev, "message");
         }
-        close(c.fd);
+        conn_close(&c);
         connected = 0;
         logmsg("phonebox: stream closed");
         usleep(300000);
@@ -257,7 +424,7 @@ static void *post_thread(void *v) {
     struct post_arg *a = v;
     struct conn c;
     int code = request(&c, "POST", a->path);
-    if (c.fd >= 0) close(c.fd);
+    conn_close(&c);
     logmsg("phonebox: POST %s -> %d", a->path, code);
     n_posts++;
     free(a);
@@ -1360,7 +1527,8 @@ static const char *standby_mode(void) { return store_get("standby", "hold"); }
  * leave it when the agent is back. */
 static void standby_tick(void) {
     const char *us = gadget_state();
-    int usb_away = !strcmp(us, "suspended") || !strcmp(us, "not attached");
+    /* USB suspended/unplugged means "PC gone" only if we aren't talking to it over Wi-Fi */
+    int usb_away = (!strcmp(us, "suspended") || !strcmp(us, "not attached")) && !(connected && route_wifi);
     if (connected) last_seen_ms = now_ms();
     int away = usb_away || (!connected && now_ms() - last_seen_ms > 15000);
     if (away && !gone) {
@@ -1650,9 +1818,9 @@ int pb_hits(char *b, size_t len) {
 }
 
 int pb_stats(char *b, size_t len) {
-    return snprintf(b, len, "standby %s%s\nconnected %d\nconfig_version %lld\nconfigs %lu\nstates %lu\nposts %lu\npages %d\npage %d\nweather %d\n"
+    return snprintf(b, len, "route %s\npaired %s\nstandby %s%s\nconnected %d\nconfig_version %lld\nconfigs %lu\nstates %lu\nposts %lu\npages %d\npage %d\nweather %d\n"
                     "tz_off %ld\nart %ld\nhits %d\n",
-                    gone ? "on " : "off ", standby_mode(), connected, cfg_version, n_cfgs, n_states, n_posts, npg, cur, W.ok, tz_off, art_id_loaded, nhits);
+                    route_wifi ? "wifi" : "usb", strlen(store_get("pb.fp", "")) == 64 ? "yes" : "no", gone ? "on " : "off ", standby_mode(), connected, cfg_version, n_cfgs, n_states, n_posts, npg, cur, W.ok, tz_off, art_id_loaded, nhits);
 }
 
 void pb_init(struct fb *f) {
