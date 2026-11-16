@@ -274,8 +274,11 @@ static const char *const menu_items[] = {"PHONEBOX", "SCREEN", "MOUSE", "KEYBOAR
 enum { MI_PANEL, MI_SCREEN, MI_MOUSE, MI_KEYBOARD, MI_COMBO, MI_RESCUE, MI_WEBCAM, MI_SETTINGS, MI_CLOSE };
 
 /* ---------------------------------------------------------------- settings */
-#define SET_N 8
-static const char *const set_names[SET_N] = {"ROTATION", "BRIGHTNESS", "DIM AFTER", "SCREEN OFF", "CHARGE LIMIT", "USB NETWORK", "WHEN PC IS GONE", "BACK"};
+#define SET_N 11
+static const char *const set_names[SET_N] = {"ROTATION", "BRIGHTNESS", "DIM AFTER", "SCREEN OFF", "CHARGE LIMIT", "USB NETWORK",
+                                             "WHEN PC IS GONE", "REBOOT TO ROM", "DOWNLOAD MODE", "POWER OFF", "BACK"};
+static int arm_item = -1;   /* maintenance actions need a second tap within 4 s */
+static long arm_until;
 static const char *const standby_vals[] = {"hold", "ambient", "sleep"};
 static const int rot_vals[] = {-1, 0, 90, 180, 270};           /* -1 = auto */
 static const int dim_vals[] = {30, 60, 120, 300, 0};           /* 0 = never */
@@ -295,6 +298,10 @@ static void set_value(int i, char *buf, size_t len) {
     case 5: snprintf(buf, len, "%s (REBOOT)", store_get("usb_net", "rndis")); break;
     case 6: { const char *v = store_get("standby", "hold");
               snprintf(buf, len, "%s", !strcmp(v, "ambient") ? "AMBIENT CLOCK" : !strcmp(v, "sleep") ? "SCREEN OFF" : "KEEP LAST PAGE"); break; }
+    case 7: case 8: case 9:
+        if (arm_item == i && now_ms() < arm_until) snprintf(buf, len, "TAP AGAIN TO CONFIRM");
+        else snprintf(buf, len, "%s", i == 7 ? "THE OS ON THE BOOT PARTITION" : i == 8 ? "FOR FLASHING (HEIMDALL/ODIN)" : "UNTIL POWER KEY OR CABLE");
+        break;
     default: buf[0] = 0;
     }
 }
@@ -341,7 +348,14 @@ static void set_step(int i, int dir) {
     case 6: { const char *v = store_get("standby", "hold");
               int k = !strcmp(v, "ambient") ? 1 : !strcmp(v, "sleep") ? 2 : 0;
               store_set("standby", standby_vals[(k + dir + 3) % 3]); break; }
-    case 7: settings_open = 0; redraw(); return;
+    case 7: case 8: case 9:
+        if (arm_item != i || now_ms() > arm_until) { arm_item = i; arm_until = now_ms() + 4000; break; }
+        arm_item = -1;
+        if (i == 7) do_reboot("settings", NULL);
+        else if (i == 8) do_reboot("settings", "download");
+        else do_poweroff("settings");
+        break;
+    case 10: settings_open = 0; redraw(); return;
     }
     draw_settings();
     fb_present(fb);

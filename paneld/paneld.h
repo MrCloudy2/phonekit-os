@@ -14,7 +14,8 @@
 
 /* log.c / main.c */
 void logmsg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-void do_reboot(const char *why, const char *target); /* target: NULL, "recovery", "download", ... */
+void do_reboot(const char *why, const char *target);
+void do_poweroff(const char *why); /* target: NULL, "recovery", "download", ... */
 void ensure_node(const char *cls, const char *name, const char *path);
 long now_ms(void);
 long now_us(void);

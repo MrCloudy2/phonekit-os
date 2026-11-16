@@ -70,6 +70,14 @@ void logmsg(const char *fmt, ...) {
     }
 }
 
+void do_poweroff(const char *why) {
+    logmsg("power off: %s", why);
+    sync();
+    if (getpid() != 1) { logmsg("(not PID 1, not powering off)"); return; }
+    reboot(RB_POWER_OFF);
+    for (;;) pause();
+}
+
 void do_reboot(const char *why, const char *target) {
     logmsg("rebooting%s%s: %s", target ? " to " : "", target ? target : "", why);
     /* remember why, so the next boot can say (kernel logs don't survive a trip through the ROM) */

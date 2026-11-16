@@ -306,7 +306,8 @@ menu on-device, per-page key bindings.
 - [ ] A PC boots from an ISO exposed as CD-ROM.
 - [ ] Switching ISO / ejecting from the phone works without re-plugging.
 
-#### M6f · Install layouts and maintenance menu ⬜
+#### M6f · Install layouts and maintenance menu 🟨
+*2026-11-17: Settings has REBOOT TO ROM / DOWNLOAD MODE / POWER OFF (two-tap confirm); `make update` for in-place updates; layouts documented in the README. `make restore-recovery` pending.*
 *Added 2026-11-16.* Recovery stays the default target (it keeps Android as a working fallback), but it is a choice.
 **Deliverables**
 - Documented layouts: **dual** (recovery: power on → ROM, combo → PhoneKit), **dedicated** (boot: straight to
