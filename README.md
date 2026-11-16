@@ -8,6 +8,8 @@ Linux kernel and one small native program, `paneld`, which owns the screen, touc
 It boots in seconds, idles at a fraction of Android's power draw, and charges the battery only to a safe
 40–60 % window, so it can stay plugged in for years.
 
+**Why:** a phone that still works isn't obsolete, just abandoned. Read the [manifesto](MANIFESTO.md).
+
 > [!WARNING]
 > **This is not an app you install. You will unlock a bootloader and flash a modified boot image to your phone.**
 > Unlocking usually wipes the phone, can void the warranty, and on Samsung trips Knox permanently.
@@ -88,7 +90,20 @@ Want to add your phone? That's what the [porting guide](docs/porting-guide.md) a
 
 The safe layout: keep a normal ROM (e.g. LineageOS) on the **boot** partition and flash phonepanel to
 **recovery**. Power on → your ROM. Recovery combo (or `adb reboot recovery`) → phonepanel. Nothing about your
-ROM changes, and if phonepanel misbehaves, its watchdog reboots back to the ROM by itself.
+ROM changes, and if phonepanel misbehaves, its watchdog reboots back to the ROM by itself. Keeping Android
+is a feature: the phone stays a phone, and you always have a working OS to fall back to.
+
+| Layout | Power on → | Trade-off |
+|---|---|---|
+| **Dual** (recovery), default | your ROM; phonepanel via the recovery combo | Your ROM's recovery is replaced (see below) |
+| **Dedicated** (boot) | phonepanel directly | No Android left; fastest; recovering needs download/fastboot mode |
+| **A/B slot** (phones without a recovery partition) | the active slot | Planned ([M6f](ROADMAP.md)) |
+
+> [!NOTE]
+> **For technical users:** in the dual layout your ROM's own recovery is gone. On non-A/B phones, ROM OTA updates
+> (LineageOS updater) install *through recovery*, so they stop working. Flash the ROM's recovery back to update,
+> then reflash phonepanel. A `make restore-recovery` helper and an on-device maintenance menu (reboot to
+> download mode, partition backup over USB) are planned in [M6f](ROADMAP.md).
 
 Needs on the PC (Linux): `aarch64-linux-gnu-gcc` (static glibc), `mkbootimg`/`unpack_bootimg`, `avbtool`,
 `python3`, `adb`, and `heimdall` (Samsung) or `fastboot`. For a source kernel build: `clang`/`lld`.
@@ -159,4 +174,4 @@ warranty. **You do this at your own risk. The software is provided "as is", with
 
 ## License
 
-[MIT](LICENSE) for everything except `devices/*/kernel-patches/` (GPL-2.0, matching the Linux kernel).
+[MIT](LICENSE), with the spirit of it in the [manifesto](MANIFESTO.md), for everything except `devices/*/kernel-patches/` (GPL-2.0, matching the Linux kernel).

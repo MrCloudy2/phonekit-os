@@ -170,6 +170,23 @@ battery-less test, < 100 mW off (133 mW now; needs suspend-to-RAM).*
 - [ ] Idle power with the screen blanked is measured and recorded (target: **< 100 mW**, to verify).
 - [ ] Clean behaviour on power loss (no filesystem corruption: rootfs is read-only and config uses atomic writes).
 
+#### M4b · Standby policy: what the phone does when the host is gone ⬜
+*Added 2026-11-16 at the user's request.* A Settings entry, per mode, the user chooses:
+**Deliverables**
+- **Ambient**: clock + user-picked basic widgets (date, battery, last values), refreshed once a minute, CPUs
+  capped. Note: on LCD phones the backlight dominates (~300+ mW); OLED phones do this far cheaper.
+- **Hold**: keep the last panel, dimmed, with an "offline" badge.
+- **Sleep**: screen off; wake automatically on host activity: USB resume (the gadget sees the host's
+  suspend/resume, so "PC sleeps → panel sleeps, PC wakes → panel wakes" needs no host software), a new
+  connection, incoming data, or a key.
+- **Off**: power off until cable plug-in or the power key.
+- Later: real suspend-to-RAM for Sleep (see stretch goal "Deep standby").
+
+**Confirm**
+- [ ] Each choice survives a reboot and behaves as described when the host disconnects / sleeps.
+- [ ] Host suspend → phone sleeps within 5 s; host resume → panel back within 1 s.
+- [ ] Ambient power measured and recorded.
+
 ---
 
 ### Phase 2: USB communication (Mode A / Mode B)
@@ -288,6 +305,39 @@ menu on-device, per-page key bindings.
 - [ ] A PC boots from an ISO exposed as CD-ROM.
 - [ ] Switching ISO / ejecting from the phone works without re-plugging.
 
+#### M6f · Install layouts and maintenance menu ⬜
+*Added 2026-11-16.* Recovery stays the default target (it keeps Android as a working fallback), but it is a choice.
+**Deliverables**
+- Documented layouts: **dual** (recovery: power on → ROM, combo → phonepanel), **dedicated** (boot: straight to
+  phonepanel, no ROM), **A/B slot** (devices without a recovery partition: spare slot + `fastboot set_active`).
+- README note for technical users: in the dual layout the ROM's own recovery is gone, so **ROM OTA updates that
+  install through recovery stop working**. `make restore-recovery` puts the ROM's recovery back for an update.
+- On-device maintenance menu: reboot to download/fastboot/ROM, expose a partition read-only over USB mass
+  storage for backup, wipe `/data` (with confirmation), version info, shell. No OTA installer (out of scope).
+
+**Confirm**
+- [ ] Each layout installed and reverted on at least one device; ROM OTA works after `restore-recovery`.
+- [ ] Partition backup over USB matches the on-device sha256.
+
+#### M6g · RESCUE mode: console for headless servers ⬜
+*Added 2026-11-16.* The phone as a crash cart for a server that lost its network.
+**Deliverables**
+- Composite gadget: **HID keyboard + CDC-ACM serial + USB network** at once. CDC-ACM and RNDIS/NCM are in
+  every distro kernel, no GUD needed.
+- On-phone **terminal** (VT100/xterm subset renderer in paneld) on the serial port, with the COMBO keyboard.
+- **Bootstrap macro** for unprepared servers: types blind on the server's own console (login, then
+  `systemctl start serial-getty@ttyACM0`, or `dhclient usb0`), after which the output shows on the phone.
+  Credentials are typed from the phone's on-screen keyboard and never stored unless the user opts in.
+- Docs: one-time server prep (`systemctl enable serial-getty@ttyACM0` or a udev rule) so plugging in shows a
+  login prompt immediately; optional GUD console (`gud` is in mainline ≥ 5.13; fbcon only lands on it if it's the first framebuffer).
+- Known limit: BIOS/GRUB/an unbootable server are **keyboard only** (no OS → no serial; the phone can't
+  capture HDMI because its one USB port is in device mode).
+
+**Confirm**
+- [ ] Prepared server: plug in → login prompt on the phone in < 5 s; full-screen apps (htop, vim) render.
+- [ ] Unprepared server with a console login: the bootstrap macro gets a shell on the phone.
+- [ ] SSH over the USB link to the phone's DHCP address while the server's main network is down.
+
 ### Phase 3: Widgets in the image
 
 #### M8 · Widget engine ⬜
@@ -339,6 +389,46 @@ menu on-device, per-page key bindings.
 - [ ] Pairing works with no cable.
 - [ ] Unpaired clients are rejected; a replayed or tampered session fails.
 - [ ] Same latency targets as M7 on a local LAN (**< 50 ms**).
+
+#### M10b · Tethering: phone as a USB Wi-Fi / mobile-data adapter ⬜
+*Added 2026-11-16.*
+**Deliverables**
+- The USB network function (RNDIS/NCM, driverless on Linux/Windows/macOS) routed (NAT) to the phone's Wi-Fi
+  or cellular uplink, so the host gets internet. Can run **alongside** other modes (composite gadget).
+- Cellular is SoC-dependent: Qualcomm modems work with ModemManager/QMI (postmarketOS proves it); Samsung
+  Exynos Shannon modems need Android's closed RIL, so likely not feasible there. Status per device in `device.yaml`.
+- Optional Wi-Fi hotspot (AP mode) where the driver supports it.
+- Note in the docs: some carrier plans restrict tethering.
+
+**Confirm**
+- [ ] Host browses via the phone's Wi-Fi with no driver install on Linux, Windows and macOS; throughput recorded (USB 2.0 caps ~300 Mbit/s).
+- [ ] Tethering runs together with PANEL or COMBO mode.
+- [ ] (Qualcomm device) same over mobile data.
+
+#### M10c · Bluetooth and NFC (optional per device) ⬜
+*Added 2026-11-16.* Each porter decides which radios to bring up; status lives in `device.yaml`.
+**Deliverables**
+- Bluetooth via BlueZ where the kernel driver exists (XCover: Samsung SCSC, same chip as Wi-Fi).
+- **Phone as a Bluetooth keyboard/trackpad** (HID device profile): wireless MOUSE/KEYBOARD/COMBO for any host,
+  including tablets and TVs. BLE transport for MCU projects (stretch goal moves here).
+- NFC: lowest priority. Samsung NFC is tied to the secure element (disabling it hung boot, M1) and needs a
+  userspace NCI stack port.
+
+**Confirm**
+- [ ] Pairs with a Linux, Windows and Android host as a keyboard + trackpad; reconnects after reboot.
+- [ ] Idle power with Bluetooth on is measured.
+
+#### M11b · Remote console passthrough ⬜
+*Added 2026-11-16. Needs M6g + M11.* The phone sits on a server by USB (keyboard + serial) and on your network
+by Wi-Fi, and bridges them: a pocket serial-console server / PiKVM-lite.
+**Deliverables**
+- SSH server on the phone (dropbear, key-only) that attaches to the server's serial console and HID keyboard.
+- Pairing and keys from M11; nothing listens unpaired; on-screen indicator + log while a remote session is active.
+- Optional web terminal for the host agent.
+
+**Confirm**
+- [ ] From another PC on the LAN: shell on the server through the phone; works while the server's own network is down.
+- [ ] Unpaired/unknown keys are rejected; remote access can be switched off on the phone.
 
 ---
 
@@ -415,6 +505,24 @@ menu on-device, per-page key bindings.
 - [ ] Records for 2 more devices from different SoC families (e.g. Qualcomm and MediaTek), at least at M2.
 - [ ] A schema validator runs in CI.
 
+#### M15b · pptest: hardware test kit for ports ⬜
+*Added 2026-11-16.* So self-written (or AI-written) drivers and ports are proven, not assumed.
+**Deliverables**
+- `pptest`: reads a device's claimed capabilities from `device.yaml`, runs the matching suites
+  (today's `scripts/test-*.py` become plugins), and writes `docs/verification/<device>.md` for the PR.
+- Stress and soak: 100× reboot loop, USB replug and mode-switch loops, 24/72 h soak tracking paneld RSS and fd
+  count, thermal soak with charge-limit checks, fault injection (unplug mid-transfer, key spam, low battery).
+- Host-side fuzzing of every parser (PPJ/1 JSON, ctl channel, GUD requests) with libFuzzer/AFL, and
+  ASan/UBSan builds under qemu.
+- Debug kernel fragment (lockdep, KASAN where supported) for test builds; crash logs (`last_kmsg`, watchdog
+  dumps) collected into the report automatically.
+- CI on every PR: build + qemu + fuzz smoke; hardware results come from the PR template.
+- PROMPT.md/AGENTS.md: an agent may not claim a capability without its suite output.
+
+**Confirm**
+- [ ] The XCover Pro passes the full kit; the report is generated, not hand-written.
+- [ ] A deliberately broken build (e.g. leaking fds, mishandled replug) is caught by the kit.
+
 #### M16 · Porting skill ⬜
 **Deliverables**
 - A Claude skill (plus a plain-text porting guide) that takes a phone model and:
@@ -436,6 +544,11 @@ menu on-device, per-page key bindings.
 
 ---
 
+*M17 release checklist additions (2026-11-16):* rename decided; demo video/GIF; prebuilt XCover image;
+ideally a second device. Where to announce: XDA (general + per-device), Show HN, Lobsters, r/linux,
+r/embedded, r/homelab, r/selfhosted, r/homeassistant, r/LineageOS, postmarketOS community, r/righttorepair,
+Hackaday tips, Mastodon.
+
 ## 4. Stretch goals
 - **Deep standby**: suspend-to-RAM when the screen is off (133 mW now, phones idle at ~10–20 mW suspended);
   needs a wake strategy for the USB host (M4 notes).
@@ -444,7 +557,6 @@ menu on-device, per-page key bindings.
 - Mainline kernel path for devices with good mainline support (via postmarketOS), for longevity.
 - Haptics, the phone's own sensors (light sensor for auto-brightness, accelerometer for auto-rotate) exposed as widgets or events.
 - Multiple panels driven by one agent (multi-panel desks).
-- BLE transport for battery-powered MCU projects.
 - Audio out (notification sounds) via ALSA.
 
 ## 5. Key risks
@@ -458,6 +570,7 @@ menu on-device, per-page key bindings.
 | Samsung-specific boot quirks (vbmeta, Odin, Knox) | Brick risk | Document per device; always keep a known-good stock/LOS image |
 
 ## 6. Open questions
+- Project name: rename to **PhoneKit** (you build your own toolkit on your phone) before going public (name check 2026-11-16: the GitHub org and phonekit.io/.com are taken by unrelated products).
 - Renderer: LVGL (C, mature) vs Slint (Rust) vs custom. Decide at the start of M8, after M3 power measurements.
 - `paneld` language: C vs Rust. Leaning Rust for the protocol and transports, with a C ABI for LVGL.
 - Protocol encoding: CBOR vs a custom TLV for MCU friendliness.
