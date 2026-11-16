@@ -3,7 +3,9 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/input.h>
 #include <linux/reboot.h>
+#include <sys/ioctl.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -80,6 +82,21 @@ void do_reboot(const char *why, const char *target) {
         syscall(SYS_reboot, LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2, LINUX_REBOOT_CMD_RESTART2, target);
     reboot(RB_AUTOBOOT);
     for (;;) pause();
+}
+
+/* Is `code` held down right now on any input device? (safe mode at boot) */
+int boot_key_held(int code) {
+    for (int i = 0; i < 16; i++) {
+        char p[32];
+        snprintf(p, sizeof p, "/dev/input/event%d", i);
+        int fd = open(p, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) continue;
+        unsigned long bits[KEY_MAX / (8 * sizeof(long)) + 1] = {0};
+        int held = ioctl(fd, EVIOCGKEY(sizeof bits), bits) >= 0 && (bits[code / (8 * sizeof(long))] >> (code % (8 * sizeof(long))) & 1);
+        close(fd);
+        if (held) return 1;
+    }
+    return 0;
 }
 
 /* If devtmpfs did not give us a node, create it from /sys/class/<cls>/<name>/dev. */

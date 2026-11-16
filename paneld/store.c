@@ -112,7 +112,17 @@ int store_init(const char *partition) {
     return 0;
 }
 
+static int safe_mode;
+void store_set_safe_mode(int on) { safe_mode = on; }
+int store_safe_mode(void) { return safe_mode; }
+
+/* In safe mode (Vol Down held at boot) every saved setting reads as its default for this boot; nothing is erased,
+ * and settings changed now are saved as usual. */
 const char *store_get(const char *key, const char *dflt) {
+    if (safe_mode) {
+        for (int i = 0; i < nkv; i++) if (!strcmp(kv[i].k, key) && !strcmp(key, "last_reboot")) return kv[i].v;
+        return dflt;
+    }
     for (int i = 0; i < nkv; i++)
         if (!strcmp(kv[i].k, key)) return kv[i].v;
     return dflt;

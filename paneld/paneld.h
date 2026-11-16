@@ -115,6 +115,9 @@ int touch_corner_pending(void);
 /* store.c — persistent key=value settings in the tail of phonepanel's partition */
 int store_init(const char *partition);
 const char *store_get(const char *key, const char *dflt);
+void store_set_safe_mode(int on);
+int store_safe_mode(void);
+int boot_key_held(int code);            /* util.c: is this key down right now (any input device)? */
 int store_get_int(const char *key, int dflt);
 int store_set(const char *key, const char *value);
 int store_save(void);

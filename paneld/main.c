@@ -76,6 +76,10 @@ int main(void) {
     a.have_fb = (hw || fbpath) && fb_open(&fb, hw ? NULL : fbpath) == 0;
     touch_init(&fb);
     if (hw) store_init(PP_STORE_PART); /* first: power, keys, modes and the gadget read their settings from it */
+    if (hw && boot_key_held(KEY_VOLUMEDOWN)) {
+        store_set_safe_mode(1);
+        logmsg("SAFE MODE: Vol Down held at boot, saved settings ignored for this boot (nothing erased)");
+    }
     if (hw) power_init(a.have_fb ? &fb : NULL);
     ui_init(&fb);
     keys_init();
@@ -85,6 +89,7 @@ int main(void) {
     if (a.have_fb) {
         draw_test_pattern(&fb);
         logmsg("first frame at t=%ld ms", now_ms());
+        if (store_safe_mode()) ui_toast("SAFE MODE: SETTINGS IGNORED");
     }
     if (!hw && !fbpath) logmsg("dry run: not PID 1, framebuffer skipped (set PANELD_FB to use one)");
 

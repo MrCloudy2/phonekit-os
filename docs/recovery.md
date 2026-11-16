@@ -19,6 +19,10 @@ known-good images**. PhoneKit never touches the bootloader, so keep it that way.
    Better: the official image file from the same ROM build (that's what `make import` uses anyway).
 3. **Flash recovery, not boot.** Then a broken PhoneKit just means "boot normally into the ROM".
 
+## Safe mode
+If PhoneKit starts but a setting makes it unusable (wrong USB mode, a rotation that hides the menu, …), hold
+**Volume Down** while it boots: saved settings are ignored for that boot (nothing is erased).
+
 ## Symptoms and fixes
 | Symptom | Likely cause | Fix |
 |---|---|---|
