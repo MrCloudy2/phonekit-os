@@ -67,7 +67,7 @@ void ui_page_step(int d) {
     static const int order[] = {UI_PAGE_PANEL, UI_PAGE_STATUS, UI_PAGE_TEST};
     int i = 0;
     while (order[i] != page) i++;
-    do i = (i + d + 3) % 3; while (order[i] == UI_PAGE_PANEL && !panel_has_layout());
+    do i = (i + d + 3) % 3; while (order[i] == UI_PAGE_PANEL && !panel_has_layout() && !pb_owns());
     ui_page_set(order[i]);
 }
 

@@ -23,6 +23,29 @@ void fb_set_rotation(struct fb *f, int deg) {
     f->h = (f->rot == 90 || f->rot == 270) ? f->pw : f->ph;
 }
 
+/* Adds a LOGICAL rect to the damage (panel coordinates). */
+void fb_damage_rect(struct fb *f, int x0, int y0, int w, int h) {
+    if (x0 < 0) { w += x0; x0 = 0; }
+    if (y0 < 0) { h += y0; y0 = 0; }
+    if (x0 + w > f->w) w = f->w - x0;
+    if (y0 + h > f->h) h = f->h - y0;
+    if (w <= 0 || h <= 0) return;
+    int px, py, pwid, phei;
+    switch (f->rot) {
+    case 90:  px = f->pw - (y0 + h); py = x0;               pwid = h; phei = w; break;
+    case 180: px = f->pw - (x0 + w); py = f->ph - (y0 + h); pwid = w; phei = h; break;
+    case 270: px = y0;               py = f->ph - (x0 + w); pwid = h; phei = w; break;
+    default:  px = x0;               py = y0;               pwid = w; phei = h;
+    }
+    if (f->dx1 <= f->dx0) { f->dx0 = px; f->dy0 = py; f->dx1 = px + pwid; f->dy1 = py + phei; }
+    else {
+        if (px < f->dx0) f->dx0 = px;
+        if (py < f->dy0) f->dy0 = py;
+        if (px + pwid > f->dx1) f->dx1 = px + pwid;
+        if (py + phei > f->dy1) f->dy1 = py + phei;
+    }
+}
+
 /* (x0, y0, w, h) in LOGICAL coordinates; mapped onto the panel for the current rotation. */
 void fb_fill(struct fb *f, int x0, int y0, int w, int h, uint32_t c) {
     if (x0 < 0) { w += x0; x0 = 0; }

@@ -98,7 +98,7 @@ int main(void) {
         log_port_open(ttys[GADGET_LOG]);
         ctl_open(ttys[GADGET_CTL]);
         shell_start(ttys[GADGET_SH]);
-        pb_init();
+        if (a.have_fb) pb_init(&fb);
     } else if (getenv("PANELD_CTL")) ctl_open(getenv("PANELD_CTL")); /* testing: a pty */
 
     if (!a.have_fb && hw && ctl_fd() < 0) {

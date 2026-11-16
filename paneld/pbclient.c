@@ -1,15 +1,17 @@
 // PHONEBOX mode: a native client for the phonebox desktop agent (github.com/ersinkoc/phonebox).
 //
 // The agent tunnels its HTTP server to the phone with `adb reverse tcp:8765` (served by adbd.c). This file
-// reads the agent's page config (/api/config) and live state (/api/stream, server-sent events) from
-// 127.0.0.1:8765 and turns them into PPJ/1 layouts and value updates for the native widget engine (panel.c).
-// Taps on shortcut and media buttons go back as the same POSTs the phonebox app sends.
+// reads the agent's page config (/api/config), live state (/api/stream, server-sent events), album art
+// (/api/art) and weather (open-meteo through the agent's /api/proxy) from 127.0.0.1:8765, and draws the pages
+// natively in phonebox's look (its CSS tokens and sizes; the phone's landscape 2340x1080 is exactly 3x phonebox's
+// 780x360 CSS layout). Taps on shortcut and media buttons go back as the same POSTs the phonebox app sends.
 //
-// A background thread does the blocking HTTP; the main loop (pb_handle) does all parsing and drawing.
+// A background thread does the blocking HTTP; the main loop (pb_handle/pb_tick/pb_touch) parses and draws.
 #include "paneld.h"
 
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <math.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <pthread.h>
@@ -17,29 +19,34 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #define AGENT_PORT 8765
 #define APP_VERSION "99.0.0" /* never older than the agent's APK: no update offers to a phone without Android */
 
+/* ================================================================ HTTP (background threads) */
+
+struct blob { char *data; size_t len; };
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-static char *cfg_json, *state_json; /* latest bodies, handed to the main loop */
-static int cfg_new, state_new;
+static struct blob in_cfg, in_state, in_art, in_wx, in_work, in_quota, in_procs;
+static volatile int want_quotas, want_procs; /* main loop: a visible/configured widget needs it */ /* latest bodies, handed to the main loop */
 static int notify_r = -1, notify_w = -1;
 static volatile int connected;
+static volatile long art_want = -1;      /* main loop asks for this media artId */
+static volatile int wx_want;             /* main loop asks for a weather refresh */
+static char wx_query[256];               /* lat/lon from the config */
 static long long cfg_version;
 static unsigned long n_states, n_cfgs, n_posts;
 
-/* ---------------------------------------------------------------- HTTP (background thread) */
-
-struct conn { int fd; char buf[8192]; int len, pos; int chunked; long remain; /* body bytes left (-1: until close) */ };
+struct conn { int fd; char buf[8192]; int len, pos; int chunked; long remain; };
 
 static int conn_open(struct conn *c) {
     memset(c, 0, sizeof *c);
     c->fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (c->fd < 0) return -1;
     struct sockaddr_in sa = {.sin_family = AF_INET, .sin_port = htons(AGENT_PORT), .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
-    struct timeval tv = {15, 0}; /* the stream sends a state every second */
+    struct timeval tv = {15, 0};
     setsockopt(c->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
     int one = 1;
     setsockopt(c->fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
@@ -66,15 +73,14 @@ static int raw_line(struct conn *c, char *out, int max) {
     return ch < 0 && !n ? -1 : n;
 }
 
-/* One body byte, decoding chunked transfer encoding. */
 static int body_getc(struct conn *c) {
     if (c->chunked) {
         if (c->remain == 0) {
             char l[32];
             if (raw_line(c, l, sizeof l) < 0) return -1;
-            if (!l[0] && raw_line(c, l, sizeof l) < 0) return -1; /* CRLF after the previous chunk */
+            if (!l[0] && raw_line(c, l, sizeof l) < 0) return -1;
             c->remain = strtol(l, NULL, 16);
-            if (c->remain <= 0) return -1; /* last chunk */
+            if (c->remain <= 0) return -1;
         }
         c->remain--;
         return raw_getc(c);
@@ -96,14 +102,14 @@ static int body_line(struct conn *c, char *out, int max) {
 
 static int request(struct conn *c, const char *method, const char *path) {
     if (conn_open(c) < 0) return -1;
-    char rq[512];
+    char rq[1024];
     int n = snprintf(rq, sizeof rq,
                      "%s %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nX-PhoneBox-App: %s\r\nX-PhoneBox-Device: phonekit0001\r\n"
                      "X-PhoneBox-Model: PhoneKit\r\nAccept: */*\r\nConnection: close\r\n%s\r\n",
                      method, path, AGENT_PORT, APP_VERSION, !strcmp(method, "POST") ? "Content-Length: 0\r\n" : "");
-    if (send(c->fd, rq, (size_t)n, MSG_NOSIGNAL) != n) { close(c->fd); return -1; }
+    if (n >= (int)sizeof rq || send(c->fd, rq, (size_t)n, MSG_NOSIGNAL) != n) { close(c->fd); c->fd = -1; return -1; }
     char l[512];
-    if (raw_line(c, l, sizeof l) < 0) { close(c->fd); return -1; }
+    if (raw_line(c, l, sizeof l) < 0) { close(c->fd); c->fd = -1; return -1; }
     int code = 0;
     sscanf(l, "HTTP/%*s %d", &code);
     c->remain = -1;
@@ -114,23 +120,30 @@ static int request(struct conn *c, const char *method, const char *path) {
     return code;
 }
 
-static char *read_body(struct conn *c, size_t max) {
-    size_t cap = 16384, n = 0;
-    char *b = malloc(cap);
+static struct blob read_body(struct conn *c, size_t max) {
+    struct blob b = {malloc(16384), 0};
+    size_t cap = 16384;
     int ch;
-    while (b && (ch = body_getc(c)) >= 0 && n < max) {
-        if (n + 1 >= cap) { cap *= 2; char *nb = realloc(b, cap); if (!nb) { free(b); return NULL; } b = nb; }
-        b[n++] = (char)ch;
+    while (b.data && (ch = body_getc(c)) >= 0 && b.len < max) {
+        if (b.len + 1 >= cap) { cap *= 2; char *nb = realloc(b.data, cap); if (!nb) { free(b.data); b.data = NULL; break; } b.data = nb; }
+        b.data[b.len++] = (char)ch;
     }
-    if (b) b[n] = 0;
+    if (b.data) b.data[b.len] = 0;
     return b;
 }
 
-static void publish(char **slot, int *flag, char *body) {
+static struct blob get(const char *path, size_t max) {
+    struct conn c;
+    struct blob b = {0};
+    if (request(&c, "GET", path) == 200) b = read_body(&c, max);
+    if (c.fd >= 0) close(c.fd);
+    return b;
+}
+
+static void publish(struct blob *slot, struct blob b) {
     pthread_mutex_lock(&lock);
-    free(*slot);
-    *slot = body;
-    *flag = 1;
+    free(slot->data);
+    *slot = b;
     pthread_mutex_unlock(&lock);
     char x = 1;
     if (notify_w >= 0) (void)!write(notify_w, &x, 1);
@@ -141,19 +154,65 @@ static long long json_ll_after(const char *s, const char *key) {
     return p ? atoll(p + strlen(key)) : -1;
 }
 
+/* Side fetches (art, weather) on short-lived connections, next to the stream. */
+static void side_fetches(void) {
+    static long art_have = -1;
+    long a = art_want;
+    if (a != art_have) {
+        art_have = a;
+        char p[64];
+        snprintf(p, sizeof p, "/api/art?id=%ld", a);
+        struct blob b = a > 0 ? get(p, 4 << 20) : (struct blob){0};
+        publish(&in_art, b.data ? b : (struct blob){calloc(1, 1), 0});
+    }
+    if (wx_want && wx_query[0]) {
+        wx_want = 0;
+        char p[1024], url[512];
+        snprintf(url, sizeof url,
+                 "https://api.open-meteo.com/v1/forecast?%s&current=temperature_2m,apparent_temperature,weather_code,is_day"
+                 "&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=7", wx_query);
+        size_t o = (size_t)snprintf(p, sizeof p, "/api/proxy?url=");
+        for (const char *u = url; *u && o + 4 < sizeof p; u++) {
+            unsigned char ch = (unsigned char)*u;
+            if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || strchr("-_.~", ch)) p[o++] = (char)ch;
+            else o += (size_t)snprintf(p + o, sizeof p - o, "%%%02X", ch);
+        }
+        p[o] = 0;
+        struct blob b = get(p, 1 << 20);
+        if (b.data) publish(&in_wx, b);
+    }
+}
+
+static void *side_thread(void *v) {
+    (void)v;
+    long q_at = -600000, p_at = 0;
+    for (;;) {
+        if (connected) {
+            side_fetches();
+            if (want_quotas && now_ms() - q_at > 60000) {
+                q_at = now_ms();
+                struct blob b = get("/api/quotas", 1 << 20);
+                if (b.data && strstr(b.data, "\"providers\":[]")) q_at -= 50000; /* agent still collecting: retry in 10 s */
+                if (b.data) publish(&in_quota, b);
+            }
+            if (want_procs && now_ms() - p_at > 3000) { p_at = now_ms(); struct blob b = get("/api/procs?top=12", 1 << 20); if (b.data) publish(&in_procs, b); }
+        }
+        usleep(200000);
+    }
+    return NULL;
+}
+
 static void *http_thread(void *v) {
     (void)v;
     char *line = malloc(256 * 1024);
     for (;;) {
         if (!adbd_reverse_active(AGENT_PORT)) { connected = 0; sleep(1); continue; }
-        struct conn c;
-        if (request(&c, "GET", "/api/config") != 200) { if (c.fd >= 0) close(c.fd); connected = 0; sleep(2); continue; }
-        char *cfg = read_body(&c, 4 << 20);
-        close(c.fd);
-        if (!cfg) { sleep(2); continue; }
-        cfg_version = json_ll_after(cfg, "\"version\":");
+        struct blob cfg = get("/api/config", 4 << 20);
+        if (!cfg.data) { connected = 0; sleep(2); continue; }
+        cfg_version = json_ll_after(cfg.data, "\"version\":");
         n_cfgs++;
-        publish(&cfg_json, &cfg_new, cfg);
+        publish(&in_cfg, cfg);
+        struct conn c;
         if (request(&c, "GET", "/api/stream") != 200) { if (c.fd >= 0) close(c.fd); sleep(2); continue; }
         connected = 1;
         logmsg("phonebox: live stream open (config v%lld)", cfg_version);
@@ -162,11 +221,12 @@ static void *http_thread(void *v) {
             int n = body_line(&c, line, 256 * 1024);
             if (n < 0) break;
             if (!strncmp(line, "event: ", 7)) snprintf(ev, sizeof ev, "%s", line + 7);
+            else if (!strncmp(line, "data: ", 6) && !strcmp(ev, "work")) publish(&in_work, (struct blob){strdup(line + 6), (size_t)(n - 6)});
             else if (!strncmp(line, "data: ", 6) && !strcmp(ev, "state")) {
                 n_states++;
-                long long v = json_ll_after(line, "\"cfgVersion\":");
-                publish(&state_json, &state_new, strdup(line + 6));
-                if (v > 0 && v != cfg_version) break; /* layout edited on the PC */
+                long long ver = json_ll_after(line, "\"cfgVersion\":");
+                publish(&in_state, (struct blob){strdup(line + 6), (size_t)(n - 6)});
+                if (ver > 0 && ver != cfg_version) break; /* layout edited on the PC: refetch */
             } else if (!n) snprintf(ev, sizeof ev, "message");
         }
         close(c.fd);
@@ -197,12 +257,11 @@ static void post(const char *path) {
     pthread_detach(t);
 }
 
-/* ---------------------------------------------------------------- JSON helpers (main loop) */
+/* ================================================================ JSON helpers (main loop) */
 
 #define MAXTOK 16384
 static jtok tk[MAXTOK];
 
-/* Value token at a dotted path ("pc.gpu.util") under object `o`, or -1. */
 static int jpath(const char *s, int n, int o, const char *path) {
     char key[32];
     while (*path && o >= 0) {
@@ -215,329 +274,1127 @@ static int jpath(const char *s, int n, int o, const char *path) {
     }
     return o;
 }
-
 static int is_null(const char *s, int i) { return i < 0 || (tk[i].type == J_PRIM && s[tk[i].start] == 'n'); }
-
 static double num(const char *s, int n, int o, const char *path, double d) {
     int i = jpath(s, n, o, path);
     return is_null(s, i) ? d : json_num(s, tk, i, d);
 }
-
-/* Escapes text for a JSON string we generate (ASCII only: the font has no more). */
-static void jesc(char *out, size_t len, const char *in) {
-    size_t o = 0;
-    for (; *in && o + 2 < len; in++) {
-        unsigned char ch = (unsigned char)*in;
-        if (ch >= 0x80) { while ((in[1] & 0xc0) == 0x80) in++; ch = '?'; }
-        if (ch == '"' || ch == '\\') { out[o++] = '\\'; out[o++] = (char)ch; }
-        else if (ch >= 32) out[o++] = (char)ch;
-    }
-    out[o] = 0;
+static void str(const char *s, int n, int o, const char *path, char *out, size_t len) {
+    out[0] = 0;
+    int i = jpath(s, n, o, path);
+    if (!is_null(s, i)) json_str(s, tk, i, out, len);
 }
 
-/* ---------------------------------------------------------------- layout (main loop) */
+/* ================================================================ model */
 
-/* What each PPJ widget shows; filled when the layout is built, used on every state. */
-enum { V_NONE, V_CPU, V_GPU, V_RAM, V_RAMPCT, V_VRAM, V_DOWN, V_UP, V_PING, V_GPUTEMP, V_CPUTEMP, V_DISK0, V_DISK1,
-       V_MEDIA_TITLE, V_MEDIA_ARTIST, V_MEDIA_PLAY };
-struct bind { char id[24]; int what; int graph; };
-static struct bind binds[8 * 48];
-static int nbinds;
-static int built_landscape = -1;
-static char *cfg_copy; /* the config we built from, kept to rebuild on rotation */
+enum { T_CLOCK, T_STAT, T_GAUGE, T_CHART, T_METERS, T_MEDIA, T_SHORTCUTS, T_NOTE, T_FORECAST, T_QUOTAS, T_SESSIONS, T_GITHUB, T_PROCS, T_OTHER };
+enum { M_CPU, M_GPU, M_RAM, M_VRAM, M_NET, M_DOWN, M_UP, M_PING, M_GPUTEMP, M_CPUTEMP, M_N };
+struct pbw {
+    int type, x, y, w, h;
+    int metric[2], nmetric;
+    int status, weather, sc_cols;
+    char text[160], tname[24];
+};
+#define PB_PAGES 8
+#define PB_W 24
+static struct { char title[32]; int n; struct pbw w[PB_W]; } pg[PB_PAGES];
+static int npg, cur, have_cfg;
+static struct { char id[32], label[40]; uint32_t color; } sc[32];
+static int nsc;
 
-static int metric_of(const char *m) {
-    static const struct { const char *n; int v; } M[] = {
-        {"cpu", V_CPU}, {"gpu", V_GPU}, {"ram", V_RAM}, {"vram", V_VRAM}, {"net", V_DOWN}, {"down", V_DOWN},
-        {"up", V_UP}, {"ping", V_PING}, {"gputemp", V_GPUTEMP}, {"cputemp", V_CPUTEMP}};
-    for (size_t i = 0; i < sizeof M / sizeof M[0]; i++) if (!strcmp(M[i].n, m)) return M[i].v;
-    return V_CPU;
-}
+#define HIST 60
+static float hist[M_N][HIST];
+static int hn, hpos;
+static struct {
+    double cpu, cputemp, gpu, gputemp, gpupower, ram, ramt, vram, vramt, down, up, ping, uptime;
+    int has_gpu, ndisk;
+    char host[40], cpuname[64], gpuname[64];
+    struct { char name[16]; double pct; } disk[4];
+    int media, playing;
+    char app[32], title[96], artist[96];
+    long art, pos_ms, dur_ms, at_ms;
+    double vol;
+    int has_vol, muted;
+} S;
+static struct canvas art;
+static long art_id_loaded = -1;      /* artId decoded into `art` */
+static struct blob art_raw;          /* the JPEG/PNG bytes, re-decoded when the drawn size changes */
+static long art_raw_id = -1;
+static struct { int ok, code, is_day; double t, feels, tmax, tmin; char city[40]; int dcode[7]; double dmax[7], dmin[7]; int nd; } W;
+/* list widgets: quotas, sessions, github, processes */
+struct row { char a[64], b[48], c[24]; double pct; uint32_t col; };
+#define ROWS 12
+static struct row q_rows[ROWS], s_rows[ROWS], g_rows[ROWS], p_rows[ROWS];
+static int nq, ns, ng, np, g_notif, p_total;
+static char g_err[120], q_head[40];
+static long tz_off;            /* seconds east of UTC, from open-meteo for the configured place */
+static long long pc_ts_skew;   /* PC epoch ms − phone epoch ms */
 
-static const char *metric_label(int v) {
-    switch (v) {
-    case V_CPU: return "CPU"; case V_GPU: return "GPU"; case V_RAM: return "RAM"; case V_VRAM: return "VRAM";
-    case V_DOWN: return "DOWNLOAD"; case V_UP: return "UPLOAD"; case V_PING: return "PING";
-    case V_GPUTEMP: return "GPU TEMP"; case V_CPUTEMP: return "CPU TEMP";
-    default: return "";
-    }
-}
-
-static const char *metric_color(int v) {
-    switch (v) {
-    case V_CPU: return "#38bdf8"; case V_GPU: case V_VRAM: return "#a78bfa"; case V_RAM: case V_RAMPCT: return "#34d399";
-    case V_DOWN: return "#22d3ee"; case V_UP: return "#f472b6"; case V_GPUTEMP: case V_CPUTEMP: return "#f97316";
-    default: return "#94a3b8";
-    }
-}
-
-static char lay[48 * 1024];
-static size_t lo;
-static int lw; /* widgets in the current page */
+static struct fb *fb;
+static struct canvas cv;
+static float SC;  /* device px per CSS px */
 static int land;
 
-static void bind_add(const char *id, int what, int graph) {
-    if (nbinds >= (int)(sizeof binds / sizeof binds[0])) return;
-    snprintf(binds[nbinds].id, sizeof binds[nbinds].id, "%s", id);
-    binds[nbinds].what = what; binds[nbinds].graph = graph;
-    nbinds++;
+/* colours (phonebox style.css :root) */
+#define BG 0x06080b
+#define TEXT 0xeef2f6
+#define MUTED 0x8a94a3
+#define DIM 0x5b6472
+static const uint32_t MCOL[M_N] = {0x2dd4bf, 0x84cc16, 0xa78bfa, 0x84cc16, 0xf59e0b, 0xf59e0b, 0x60a5fa, 0x38bdf8, 0xf97316, 0xf97316};
+static const char *const MLABEL[M_N] = {"CPU", "GPU", "RAM", "VRAM", "NETWORK", "DOWNLOAD", "UPLOAD", "PING", "GPU TEMP", "CPU TEMP"};
+static const char *const MNAME[M_N] = {"Processor", "Graphics", "Memory", "Video memory", "Network", "Download", "Upload", "Ping", "GPU temperature", "CPU temperature"};
+
+static int metric_of(const char *m) {
+    static const char *const K[M_N] = {"cpu", "gpu", "ram", "vram", "net", "down", "up", "ping", "gputemp", "cputemp"};
+    for (int i = 0; i < M_N; i++) if (!strcmp(K[i], m)) return i;
+    return -1;
 }
 
-/* Adds one PPJ widget, in phonebox (landscape 12x6) grid coordinates; transposed in portrait. */
-static void add(const char *id, const char *type, int x, int y, int w, int h, const char *extra) {
-    if (lw >= 48 || w <= 0 || h <= 0) return;
-    int X = x, Y = y, W = w, H = h;
-    if (!land) { X = y; Y = x; W = h; H = w; }
-    lo += (size_t)snprintf(lay + lo, sizeof lay - lo, "%s{\"id\":\"%s\",\"type\":\"%s\",\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d%s%s}",
-                           lw ? "," : "", id, type, X, Y, W, H, extra && *extra ? "," : "", extra ? extra : "");
-    lw++;
+static uint32_t parse_hex(const char *c, uint32_t d) {
+    if (c[0] != '#' || strlen(c) < 7) return d;
+    return (uint32_t)strtoul(c + 1, NULL, 16) & 0xffffff;
 }
 
-static void build_widget(const char *s, int n, int wtok, int pg, int sc_arr) {
-    char type[24] = "", wid[16] = "", id[24], ex[256];
-    json_str(s, tk, json_get(s, tk, n, wtok, "type"), type, sizeof type);
-    json_str(s, tk, json_get(s, tk, n, wtok, "id"), wid, sizeof wid);
-    int x = (int)num(s, n, wtok, "x", 0), y = (int)num(s, n, wtok, "y", 0);
-    int w = (int)num(s, n, wtok, "w", 1), h = (int)num(s, n, wtok, "h", 1);
-    int opt = json_get(s, tk, n, wtok, "options");
-    if (x < 0 || y < 0 || x + w > 12 || y + h > 6) return;
-    snprintf(id, sizeof id, "pb.%d.%.12s", pg, wid);
-    if (!strcmp(type, "clock") || !strcmp(type, "worldclock") || !strcmp(type, "wordclock") || !strcmp(type, "analog")) {
-        add(id, "clock", x, y, w, h, w >= 6 ? "\"format\":\"hms\"" : "\"format\":\"hm\"");
-    } else if (!strcmp(type, "stat") || !strcmp(type, "gauge")) {
-        char m[16] = "cpu";
-        json_str(s, tk, jpath(s, n, opt, "metric"), m, sizeof m);
-        int v = metric_of(m);
-        snprintf(ex, sizeof ex, "\"label\":\"%s\",\"color\":\"%s\",\"decimals\":%d%s", metric_label(v), metric_color(v),
-                 v == V_RAM ? 1 : 0, !strcmp(type, "gauge") ? ",\"min\":0,\"max\":100" : "");
-        add(id, !strcmp(type, "gauge") ? "gauge" : "value", x, y, w, h, ex);
-        bind_add(id, v, 0);
-    } else if (!strcmp(type, "chart")) {
-        int arr = jpath(s, n, opt, "metrics");
-        char m[16] = "cpu";
-        if (arr >= 0 && tk[arr].type == J_ARR && tk[arr].size > 0) json_str(s, tk, arr + 1, m, sizeof m);
-        int v = metric_of(m);
-        snprintf(ex, sizeof ex, "\"label\":\"%s\",\"color\":\"%s\"", v == V_DOWN || v == V_UP ? "NETWORK MB/S" : metric_label(v),
-                 metric_color(v));
-        add(id, "graph", x, y, w, h, ex);
-        bind_add(id, v, 1);
-    } else if (!strcmp(type, "meters")) {
-        static const int rows_what[] = {V_RAMPCT, V_VRAM, V_DISK0, V_DISK1};
-        static const char *const rows_lbl[] = {"RAM", "VRAM", "DISK", "DISK 2"};
-        int k = h < 4 ? h : 4;
-        for (int i = 0; i < k; i++) {
-            char sid[24];
-            snprintf(sid, sizeof sid, "%s.%d", id, i);
-            snprintf(ex, sizeof ex, "\"label\":\"%s\",\"unit\":\"%%\",\"min\":0,\"max\":100,\"color\":\"%s\"", rows_lbl[i],
-                     metric_color(rows_what[i]));
-            add(sid, "gauge", x, y + i * (h / k), w, h / k, ex);
-            bind_add(sid, rows_what[i], 0);
-        }
-    } else if (!strcmp(type, "media")) {
-        char sid[24];
-        int th = h >= 3 ? h - 1 : h;
-        snprintf(sid, sizeof sid, "%s.t", id);
-        add(sid, "label", x, y, w, th > 1 ? th - 1 : 1, "\"text\":\"NOTHING PLAYING\",\"size\":3");
-        bind_add(sid, V_MEDIA_TITLE, 0);
-        if (th > 1) {
-            snprintf(sid, sizeof sid, "%s.a", id);
-            add(sid, "label", x, y + th - 1, w, 1, "\"text\":\"\",\"size\":2");
-            bind_add(sid, V_MEDIA_ARTIST, 0);
-        }
-        if (h >= 3) {
-            int bw = w / 3;
-            add("pb.media.prev", "button", x, y + h - 1, bw, 1, "\"text\":\"PREV\"");
-            add("pb.media.playpause", "button", x + bw, y + h - 1, w - 2 * bw, 1, "\"text\":\"PLAY\"");
-            add("pb.media.next", "button", x + w - bw, y + h - 1, bw, 1, "\"text\":\"NEXT\"");
-            bind_add("pb.media.playpause", V_MEDIA_PLAY, 0);
-        }
-    } else if (!strcmp(type, "shortcuts")) {
-        int ns = sc_arr >= 0 && tk[sc_arr].type == J_ARR ? tk[sc_arr].size : 0;
-        int cols = (int)num(s, n, opt, "columns", 4);
-        if (cols < 1) cols = 1;
-        if (cols > w) cols = w;
-        int cw = w / cols, rows = (ns + cols - 1) / cols;
-        if (rows < 1) rows = 1;
-        int rh = h / rows;
-        if (rh < 1) { rh = 1; rows = h; }
-        int j = sc_arr + 1;
-        for (int i = 0; i < ns && i < cols * rows; i++, j = json_skip(tk, n, j)) {
-            char sid[24], scid[17] = "", label[40] = "", el[48];
-            json_str(s, tk, json_get(s, tk, n, j, "id"), scid, sizeof scid);
-            json_str(s, tk, json_get(s, tk, n, j, "label"), label, sizeof label);
-            jesc(el, sizeof el, label);
-            snprintf(sid, sizeof sid, "pb.run.%s", scid);
-            char col[16] = "";
-            json_str(s, tk, json_get(s, tk, n, j, "color"), col, sizeof col);
-            snprintf(ex, sizeof ex, "\"text\":\"%.20s\"%s%s%s", el, col[0] == '#' ? ",\"color\":\"" : "", col[0] == '#' ? col : "",
-                     col[0] == '#' ? "\"" : "");
-            add(sid, "button", x + (i % cols) * cw, y + (i / cols) * rh, cw, rh, ex);
-        }
-    } else if (!strcmp(type, "label") || !strcmp(type, "note") || !strcmp(type, "quote")) {
-        char txt[64] = "", e[80];
-        json_str(s, tk, jpath(s, n, opt, "text"), txt, sizeof txt);
-        jesc(e, sizeof e, txt[0] ? txt : type);
-        snprintf(ex, sizeof ex, "\"text\":\"%.40s\",\"size\":2", e);
-        add(id, "label", x, y, w, h, ex);
-    } else {
-        /* not drawn natively yet: say so in its place */
-        char up[32];
-        size_t i = 0;
-        for (; type[i] && i < sizeof up - 1; i++) up[i] = (char)(type[i] >= 'a' && type[i] <= 'z' ? type[i] - 32 : type[i]);
-        up[i] = 0;
-        snprintf(ex, sizeof ex, "\"text\":\"%s (SOON)\",\"size\":2,\"color\":\"#475569\"", up);
-        add(id, "label", x, y, w, h, ex);
-    }
-}
+/* ================================================================ config → model */
 
-static void build_layout(const char *cfg) {
-    int n = json_parse(cfg, (int)strlen(cfg), tk, MAXTOK);
+static void load_config(const char *cfgs) {
+    int n = json_parse(cfgs, (int)strlen(cfgs), tk, MAXTOK);
     if (n < 1) { logmsg("phonebox: config JSON unparsable (%d)", n); return; }
-    int c = json_get(cfg, tk, n, 0, "config");
-    int pages = jpath(cfg, n, c, "pages"), sc = jpath(cfg, n, c, "shortcuts");
-    if (pages < 0 || tk[pages].type != J_ARR) return;
-    land = panel_landscape();
-    built_landscape = land;
-    nbinds = 0;
-    char rep[256];
-    panel_handle("{\"op\":\"clear\"}", 14, rep, sizeof rep);
-    int pg = 0, j = pages + 1;
-    for (int k = 0; k < tk[pages].size && pg < 8; k++, j = json_skip(tk, n, j)) {
-        if (tk[j].type != J_OBJ) continue;
-        int en = json_get(cfg, tk, n, j, "enabled");
-        if (en >= 0 && cfg[tk[en].start] == 'f') continue;
-        char title[32] = "", et[40];
-        json_str(cfg, tk, json_get(cfg, tk, n, j, "title"), title, sizeof title);
-        jesc(et, sizeof et, title);
-        lo = 0; lw = 0;
-        lo += (size_t)snprintf(lay, sizeof lay, "{\"op\":\"layout\",\"page\":%d,\"title\":\"%.24s\",\"widgets\":[", pg, et);
-        int ws = json_get(cfg, tk, n, j, "widgets");
-        if (ws >= 0 && tk[ws].type == J_ARR) {
-            int q = ws + 1;
-            for (int i = 0; i < tk[ws].size; i++, q = json_skip(tk, n, q))
-                if (tk[q].type == J_OBJ) build_widget(cfg, n, q, pg, sc);
+    int c = json_get(cfgs, tk, n, 0, "config");
+    int pages = jpath(cfgs, n, c, "pages"), shs = jpath(cfgs, n, c, "shortcuts");
+    nsc = 0;
+    if (shs >= 0 && tk[shs].type == J_ARR) {
+        int j = shs + 1;
+        for (int k = 0; k < tk[shs].size && nsc < 32; k++, j = json_skip(tk, n, j)) {
+            char col[16];
+            str(cfgs, n, j, "id", sc[nsc].id, sizeof sc[nsc].id);
+            str(cfgs, n, j, "label", sc[nsc].label, sizeof sc[nsc].label);
+            str(cfgs, n, j, "color", col, sizeof col);
+            sc[nsc].color = parse_hex(col, 0x64748b);
+            nsc++;
         }
-        lo += (size_t)snprintf(lay + lo, sizeof lay - lo, "]}");
-        panel_handle(lay, (int)lo, rep, sizeof rep); /* panel.c has its own token array: tk stays valid */
-        pg++;
     }
-    char p0[32];
-    int l0 = snprintf(p0, sizeof p0, "{\"op\":\"page\",\"n\":0}");
-    panel_handle(p0, l0, rep, sizeof rep);
-    logmsg("phonebox: %d pages built (%s)", pg, land ? "landscape" : "portrait, transposed");
+    double lat = num(cfgs, n, c, "weather.lat", 1000), lon = num(cfgs, n, c, "weather.lon", 1000);
+    str(cfgs, n, c, "weather.city", W.city, sizeof W.city);
+    if (lat < 1000 && lon < 1000) { snprintf(wx_query, sizeof wx_query, "latitude=%.4f&longitude=%.4f", lat, lon); wx_want = 1; }
+    npg = 0;
+    if (pages < 0 || tk[pages].type != J_ARR) return;
+    int j = pages + 1;
+    for (int k = 0; k < tk[pages].size && npg < PB_PAGES; k++, j = json_skip(tk, n, j)) {
+        if (tk[j].type != J_OBJ) continue;
+        int en = json_get(cfgs, tk, n, j, "enabled");
+        if (en >= 0 && cfgs[tk[en].start] == 'f') continue;
+        struct pbw *ws = pg[npg].w;
+        pg[npg].n = 0;
+        str(cfgs, n, j, "title", pg[npg].title, sizeof pg[npg].title);
+        int arr = json_get(cfgs, tk, n, j, "widgets");
+        if (arr >= 0 && tk[arr].type == J_ARR) {
+            int q = arr + 1;
+            for (int i = 0; i < tk[arr].size && pg[npg].n < PB_W; i++, q = json_skip(tk, n, q)) {
+                struct pbw *w = &ws[pg[npg].n];
+                memset(w, 0, sizeof *w);
+                char type[24];
+                str(cfgs, n, q, "type", type, sizeof type);
+                snprintf(w->tname, sizeof w->tname, "%s", type);
+                w->x = (int)num(cfgs, n, q, "x", 0); w->y = (int)num(cfgs, n, q, "y", 0);
+                w->w = (int)num(cfgs, n, q, "w", 1); w->h = (int)num(cfgs, n, q, "h", 1);
+                if (w->x < 0 || w->y < 0 || w->w < 1 || w->h < 1 || w->x + w->w > 12 || w->y + w->h > 6) continue;
+                int opt = json_get(cfgs, tk, n, q, "options");
+                char m[16];
+                if (!strcmp(type, "clock")) {
+                    w->type = T_CLOCK;
+                    int st = jpath(cfgs, n, opt, "status"), wx = jpath(cfgs, n, opt, "weather");
+                    w->status = st < 0 || cfgs[tk[st].start] != 'f';
+                    w->weather = wx < 0 || cfgs[tk[wx].start] != 'f';
+                } else if (!strcmp(type, "stat") || !strcmp(type, "gauge")) {
+                    w->type = !strcmp(type, "stat") ? T_STAT : T_GAUGE;
+                    str(cfgs, n, opt, "metric", m, sizeof m);
+                    w->metric[0] = metric_of(m) < 0 ? M_CPU : metric_of(m);
+                    w->nmetric = 1;
+                } else if (!strcmp(type, "chart")) {
+                    w->type = T_CHART;
+                    int ar = jpath(cfgs, n, opt, "metrics");
+                    if (ar >= 0 && tk[ar].type == J_ARR)
+                        for (int z = 0, e = ar + 1; z < tk[ar].size && w->nmetric < 2; z++, e = json_skip(tk, n, e)) {
+                            json_str(cfgs, tk, e, m, sizeof m);
+                            if (metric_of(m) >= 0) w->metric[w->nmetric++] = metric_of(m);
+                        }
+                    if (!w->nmetric) { w->metric[0] = M_CPU; w->nmetric = 1; }
+                } else if (!strcmp(type, "meters")) w->type = T_METERS;
+                else if (!strcmp(type, "media")) w->type = T_MEDIA;
+                else if (!strcmp(type, "shortcuts")) { w->type = T_SHORTCUTS; w->sc_cols = (int)num(cfgs, n, opt, "columns", 4); }
+                else if (!strcmp(type, "note") || !strcmp(type, "label") || !strcmp(type, "quote")) {
+                    w->type = T_NOTE;
+                    str(cfgs, n, opt, "text", w->text, sizeof w->text);
+                } else if (!strcmp(type, "forecast") || !strcmp(type, "weather")) w->type = T_FORECAST;
+                else if (!strcmp(type, "quotas") || !strcmp(type, "quotaring")) { w->type = T_QUOTAS; want_quotas = 1; }
+                else if (!strcmp(type, "sessions")) w->type = T_SESSIONS;
+                else if (!strcmp(type, "github")) w->type = T_GITHUB;
+                else if (!strcmp(type, "processes") || !strcmp(type, "topprocs")) w->type = T_PROCS;
+                else w->type = T_OTHER;
+                pg[npg].n++;
+            }
+        }
+        npg++;
+    }
+    if (cur >= npg) cur = 0;
+    have_cfg = npg > 0;
+    logmsg("phonebox: %d pages, %d shortcuts", npg, nsc);
 }
 
-/* ---------------------------------------------------------------- live state (main loop) */
+/* ================================================================ state → model */
 
-static void set_num(const char *id, double v, const char *unit, int graph) {
-    char b[160], rep[64];
-    int n = graph ? snprintf(b, sizeof b, "{\"op\":\"set\",\"id\":\"%s\",\"push\":%.3f}", id, v)
-                  : snprintf(b, sizeof b, "{\"op\":\"set\",\"id\":\"%s\",\"value\":%.3f%s%s%s}", id, v,
-                             unit ? ",\"unit\":\"" : "", unit ? unit : "", unit ? "\"" : "");
-    panel_handle(b, n, rep, sizeof rep);
-}
-
-static void set_text(const char *id, const char *field, const char *txt) {
-    char e[96], b[200], rep[64];
-    jesc(e, sizeof e, txt);
-    int n = snprintf(b, sizeof b, "{\"op\":\"set\",\"id\":\"%s\",\"%s\":\"%.44s\"}", id, field, e);
-    panel_handle(b, n, rep, sizeof rep);
-}
-
-static void apply_state(const char *s) {
+static void load_state(const char *s) {
     int n = json_parse(s, (int)strlen(s), tk, MAXTOK);
     if (n < 1) return;
-    double ram = num(s, n, 0, "pc.ramUsedGb", 0), ramt = num(s, n, 0, "pc.ramTotalGb", 1);
-    double vu = num(s, n, 0, "pc.gpu.vramUsed", 0), vt = num(s, n, 0, "pc.gpu.vramTotal", 0);
-    int disks = jpath(s, n, 0, "pc.disks");
-    double dpct[2] = {0, 0};
-    if (disks >= 0 && tk[disks].type == J_ARR) {
-        int q = disks + 1;
-        for (int i = 0; i < tk[disks].size && i < 2; i++, q = json_skip(tk, n, q)) {
-            double u = num(s, n, q, "usedGb", 0), t = num(s, n, q, "totalGb", 1);
-            dpct[i] = t > 0 ? u / t * 100 : 0;
+    long long ts = (long long)num(s, n, 0, "ts", 0);
+    if (ts > 0) { struct timespec now; clock_gettime(CLOCK_REALTIME, &now); pc_ts_skew = ts - (long long)now.tv_sec * 1000 - now.tv_nsec / 1000000; }
+    str(s, n, 0, "host", S.host, sizeof S.host);
+    S.cpu = num(s, n, 0, "pc.cpu", 0);
+    S.cputemp = num(s, n, 0, "pc.cpuTemp", -1);
+    str(s, n, 0, "pc.cpuName", S.cpuname, sizeof S.cpuname);
+    int g = jpath(s, n, 0, "pc.gpu");
+    S.has_gpu = !is_null(s, g);
+    S.gpu = num(s, n, g, "util", 0); S.gputemp = num(s, n, g, "temp", -1); S.gpupower = num(s, n, g, "power", -1);
+    S.vram = num(s, n, g, "vramUsed", 0); S.vramt = num(s, n, g, "vramTotal", 0);
+    str(s, n, g, "name", S.gpuname, sizeof S.gpuname);
+    S.ram = num(s, n, 0, "pc.ramUsedGb", 0); S.ramt = num(s, n, 0, "pc.ramTotalGb", 1);
+    S.down = num(s, n, 0, "pc.netDownBps", 0); S.up = num(s, n, 0, "pc.netUpBps", 0);
+    S.ping = num(s, n, 0, "ping.ms", -1);
+    S.uptime = num(s, n, 0, "pc.uptimeSec", 0);
+    int d = jpath(s, n, 0, "pc.disks");
+    S.ndisk = 0;
+    if (d >= 0 && tk[d].type == J_ARR)
+        for (int i = 0, q = d + 1; i < tk[d].size && S.ndisk < 4; i++, q = json_skip(tk, n, q)) {
+            double u = num(s, n, q, "usedGb", 0), t = num(s, n, q, "totalGb", 0);
+            if (t <= 0) continue;
+            str(s, n, q, "name", S.disk[S.ndisk].name, sizeof S.disk[S.ndisk].name);
+            S.disk[S.ndisk].pct = u / t * 100;
+            S.ndisk++;
+        }
+    int m = json_get(s, tk, n, 0, "media");
+    S.media = !is_null(s, m);
+    if (S.media) {
+        str(s, n, m, "app", S.app, sizeof S.app);
+        str(s, n, m, "title", S.title, sizeof S.title);
+        str(s, n, m, "artist", S.artist, sizeof S.artist);
+        char album[64];
+        str(s, n, m, "album", album, sizeof album);
+        if (album[0]) { size_t l = strlen(S.artist); snprintf(S.artist + l, sizeof S.artist - l, "%s%s", l ? " \xc2\xb7 " : "", album); }
+        S.playing = num(s, n, m, "playing", 0) > 0;
+        S.art = (long)num(s, n, m, "artId", 0);
+        S.pos_ms = (long)num(s, n, m, "posMs", 0); S.dur_ms = (long)num(s, n, m, "durMs", 0);
+        S.at_ms = now_ms();
+    } else { S.playing = 0; S.art = 0; }
+    art_want = S.art;
+    int a = json_get(s, tk, n, 0, "audio");
+    S.has_vol = !is_null(s, a);
+    S.vol = num(s, n, a, "volume", 0);
+    int mu = jpath(s, n, a, "muted");
+    S.muted = mu >= 0 && s[tk[mu].start] == 't';
+    float v[M_N] = {(float)S.cpu, (float)S.gpu, (float)S.ram, S.vramt > 0 ? (float)(S.vram / S.vramt * 100) : 0,
+                    (float)S.down, (float)S.down, (float)S.up, (float)(S.ping < 0 ? 0 : S.ping),
+                    (float)(S.gputemp < 0 ? 0 : S.gputemp), (float)(S.cputemp < 0 ? 0 : S.cputemp)};
+    for (int i = 0; i < M_N; i++) hist[i][hpos] = v[i];
+    hpos = (hpos + 1) % HIST;
+    if (hn < HIST) hn++;
+}
+
+static void load_weather(const char *s) {
+    int n = json_parse(s, (int)strlen(s), tk, MAXTOK);
+    if (n < 1 || json_get(s, tk, n, 0, "current") < 0) return;
+    tz_off = (long)num(s, n, 0, "utc_offset_seconds", 0);
+    W.t = num(s, n, 0, "current.temperature_2m", 0);
+    W.feels = num(s, n, 0, "current.apparent_temperature", 0);
+    W.code = (int)num(s, n, 0, "current.weather_code", 0);
+    W.is_day = num(s, n, 0, "current.is_day", 1) > 0;
+    int dc = jpath(s, n, 0, "daily.weather_code"), mx = jpath(s, n, 0, "daily.temperature_2m_max"), mn = jpath(s, n, 0, "daily.temperature_2m_min");
+    W.nd = 0;
+    if (dc >= 0 && mx >= 0 && mn >= 0 && tk[dc].type == J_ARR)
+        for (int i = 0; i < tk[dc].size && i < 7; i++) {
+            W.dcode[i] = (int)json_num(s, tk, dc + 1 + i, 0);
+            W.dmax[i] = json_num(s, tk, mx + 1 + i, 0);
+            W.dmin[i] = json_num(s, tk, mn + 1 + i, 0);
+            W.nd++;
+        }
+    if (W.nd) { W.tmax = W.dmax[0]; W.tmin = W.dmin[0]; }
+    W.ok = 1;
+}
+
+static void dur_text(long sec, char *o, size_t l) {
+    if (sec < 0) sec = 0;
+    if (sec >= 86400) snprintf(o, l, "%ldd %ldh", sec / 86400, sec % 86400 / 3600);
+    else if (sec >= 3600) snprintf(o, l, "%ldh %ldm", sec / 3600, sec % 3600 / 60);
+    else snprintf(o, l, "%ldm", sec / 60);
+}
+
+static void load_quotas(const char *s) {
+    int n = json_parse(s, (int)strlen(s), tk, MAXTOK);
+    int pr = n > 0 ? json_get(s, tk, n, 0, "providers") : -1;
+    nq = 0;
+    if (pr < 0 || tk[pr].type != J_ARR) return;
+    long now = (long)(time(NULL) + pc_ts_skew / 1000);
+    for (int i = 0, p = pr + 1; i < tk[pr].size; i++, p = json_skip(tk, n, p)) {
+        char name[32];
+        str(s, n, p, "name", name, sizeof name);
+        int lim = json_get(s, tk, n, p, "limits");
+        if (lim < 0 || tk[lim].type != J_ARR) continue;
+        for (int k = 0, l = lim + 1; k < tk[lim].size && nq < ROWS; k++, l = json_skip(tk, n, l)) {
+            struct row *r = &q_rows[nq++];
+            char lbl[48], sev[16];
+            str(s, n, l, "label", lbl, sizeof lbl);
+            str(s, n, l, "severity", sev, sizeof sev);
+            snprintf(r->a, sizeof r->a, "%.20s \xc2\xb7 %.36s", name, lbl);
+            r->pct = num(s, n, l, "percent", 0);
+            snprintf(r->b, sizeof r->b, "%.0f%%", r->pct);
+            long rs = (long)(num(s, n, l, "resetsAt", 0) / 1000);
+            char d[24];
+            dur_text(rs - now, d, sizeof d);
+            if (rs > 0) snprintf(r->c, sizeof r->c, "resets in %s", d); else r->c[0] = 0;
+            r->col = !strcmp(sev, "critical") ? 0xef4444 : !strcmp(sev, "warning") ? 0xf59e0b : 0x22c55e;
         }
     }
-    int media = json_get(s, tk, n, 0, "media");
-    char title[96] = "", artist[96] = "";
-    int playing = 0;
-    if (!is_null(s, media)) {
-        json_str(s, tk, json_get(s, tk, n, media, "title"), title, sizeof title);
-        json_str(s, tk, json_get(s, tk, n, media, "artist"), artist, sizeof artist);
-        playing = num(s, n, media, "playing", 0) > 0;
-    }
-    for (int i = 0; i < nbinds; i++) {
-        struct bind *b = &binds[i];
-        double v = 0;
-        const char *unit = NULL;
-        switch (b->what) {
-        case V_CPU: v = num(s, n, 0, "pc.cpu", 0); unit = "%"; break;
-        case V_GPU: v = num(s, n, 0, "pc.gpu.util", 0); unit = "%"; break;
-        case V_RAM: v = ram; unit = "GB"; break;
-        case V_RAMPCT: v = ramt > 0 ? ram / ramt * 100 : 0; break;
-        case V_VRAM: v = vt > 0 ? vu / vt * 100 : 0; unit = "%"; break;
-        case V_DOWN: case V_UP: {
-            double bps = num(s, n, 0, b->what == V_DOWN ? "pc.netDownBps" : "pc.netUpBps", 0);
-            if (b->graph) v = bps / 1e6;
-            else if (bps >= 1e6) { v = bps / 1e6; unit = "MB/S"; }
-            else { v = bps / 1e3; unit = "KB/S"; }
-            break;
+    snprintf(q_head, sizeof q_head, "AI QUOTAS");
+}
+
+static void load_work(const char *s) {
+    int n = json_parse(s, (int)strlen(s), tk, MAXTOK);
+    if (n < 1) return;
+    int ss = json_get(s, tk, n, 0, "sessions");
+    ns = 0;
+    if (ss >= 0 && tk[ss].type == J_ARR)
+        for (int i = 0, q = ss + 1; i < tk[ss].size && ns < ROWS; i++, q = json_skip(tk, n, q)) {
+            struct row *r = &s_rows[ns++];
+            char tool[24], name[48], st[24], wait[32];
+            str(s, n, q, "tool", tool, sizeof tool); str(s, n, q, "name", name, sizeof name);
+            str(s, n, q, "project", r->b, sizeof r->b); str(s, n, q, "status", st, sizeof st);
+            str(s, n, q, "waitingFor", wait, sizeof wait);
+            snprintf(r->a, sizeof r->a, "%.20s \xc2\xb7 %.40s", tool, name[0] ? name : "session");
+            snprintf(r->c, sizeof r->c, "%s", wait[0] ? "waiting" : st);
+            r->col = wait[0] ? 0xf59e0b : !strcmp(st, "running") || !strcmp(st, "working") ? 0x22c55e : 0x8a94a3;
         }
-        case V_PING: v = num(s, n, 0, "ping.ms", 0); unit = "MS"; break;
-        case V_GPUTEMP: v = num(s, n, 0, "pc.gpu.temp", 0); unit = "C"; break;
-        case V_CPUTEMP: v = num(s, n, 0, "pc.cpuTemp", 0); unit = "C"; break;
-        case V_DISK0: v = dpct[0]; break;
-        case V_DISK1: v = dpct[1]; break;
-        case V_MEDIA_TITLE: set_text(b->id, "text", title[0] ? title : "NOTHING PLAYING"); continue;
-        case V_MEDIA_ARTIST: set_text(b->id, "text", artist); continue;
-        case V_MEDIA_PLAY: set_text(b->id, "text", playing ? "PAUSE" : "PLAY"); continue;
-        default: continue;
+    int g = json_get(s, tk, n, 0, "github");
+    ng = 0; g_err[0] = 0;
+    if (g < 0) return;
+    str(s, n, g, "error", g_err, sizeof g_err);
+    g_notif = (int)num(s, n, g, "notifications", 0);
+    const char *lists[2] = {"reviewRequests", "myPrs"};
+    for (int L = 0; L < 2; L++) {
+        int a = json_get(s, tk, n, g, lists[L]);
+        if (a < 0 || tk[a].type != J_ARR) continue;
+        for (int i = 0, q = a + 1; i < tk[a].size && ng < ROWS; i++, q = json_skip(tk, n, q)) {
+            struct row *r = &g_rows[ng++];
+            char title[64], repo[40], ci[16];
+            str(s, n, q, "title", title, sizeof title); str(s, n, q, "repo", repo, sizeof repo); str(s, n, q, "ci", ci, sizeof ci);
+            snprintf(r->a, sizeof r->a, "#%.0f %.54s", num(s, n, q, "number", 0), title);
+            snprintf(r->b, sizeof r->b, "%.30s%s", repo, L == 0 ? " \xc2\xb7 review" : "");
+            snprintf(r->c, sizeof r->c, "%s", ci);
+            r->col = !strcmp(ci, "failure") ? 0xef4444 : !strcmp(ci, "success") ? 0x22c55e : 0x8a94a3;
         }
-        set_num(b->id, v, b->graph ? NULL : unit, b->graph);
     }
 }
 
-/* ---------------------------------------------------------------- main-loop API */
+static void load_procs(const char *s) {
+    int n = json_parse(s, (int)strlen(s), tk, MAXTOK);
+    if (n < 1) return;
+    p_total = (int)num(s, n, 0, "total", 0);
+    int g = json_get(s, tk, n, 0, "groups");
+    np = 0;
+    if (g < 0 || tk[g].type != J_ARR) return;
+    for (int i = 0, q = g + 1; i < tk[g].size && np < ROWS; i++, q = json_skip(tk, n, q)) {
+        struct row *r = &p_rows[np++];
+        char nm[48], title[48];
+        str(s, n, q, "name", nm, sizeof nm); str(s, n, q, "title", title, sizeof title);
+        int cnt = (int)num(s, n, q, "count", 1);
+        snprintf(r->a, sizeof r->a, cnt > 1 ? "%.40s (%d)" : "%.40s", title[0] ? title : nm, cnt);
+        r->pct = num(s, n, q, "cpu", 0);
+        snprintf(r->b, sizeof r->b, "%.1f%%", r->pct);
+        double mb = num(s, n, q, "memMb", 0);
+        if (mb >= 1024) snprintf(r->c, sizeof r->c, "%.1f GB", mb / 1024); else snprintf(r->c, sizeof r->c, "%.0f MB", mb);
+        r->col = 0x2dd4bf;
+    }
+}
 
+/* ================================================================ drawing helpers */
+
+static int P(float css) { return (int)lroundf(css * SC); }
+static float clampf(float lo, float v, float hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+static void grid_rect(const struct pbw *w, int *X, int *Y, int *Wd, int *Ht) {
+    int gx = w->x, gy = w->y, gw = w->w, gh = w->h, cols = 12, rows = 6;
+    if (!land) { gx = w->y; gy = w->x; gw = w->h; gh = w->w; cols = 6; rows = 12; }
+    float pl = 14 * SC, pr = 14 * SC, pt = 10 * SC, pb = 17 * SC, gap = 8 * SC;
+    float cw = (fb->w - pl - pr - gap * (cols - 1)) / cols, ch = (fb->h - pt - pb - gap * (rows - 1)) / rows;
+    *X = (int)(pl + gx * (cw + gap)); *Y = (int)(pt + gy * (ch + gap));
+    *Wd = (int)(gw * cw + (gw - 1) * gap); *Ht = (int)(gh * ch + (gh - 1) * gap);
+}
+
+static void card(int w, int h) {
+    float m = fminf((float)w, (float)h) / SC;
+    int r = P(clampf(10, 0.07f * m, 20));
+    cv_rrect(&cv, 0, 0, w, h, r, 0xffffff, 11);                                /* --card: rgba(255,255,255,.045) */
+    cv_rrect_stroke(&cv, 0, 0, w, h, r, fmaxf(1.5f, SC * 0.6f), 0xffffff, 20);  /* --line: .08 */
+}
+
+static void fmt_rate(double bps, char *v, size_t vl, char *u, size_t ul) {
+    if (bps >= 1e9) { snprintf(v, vl, "%.1f", bps / 1e9); snprintf(u, ul, "GB/s"); }
+    else if (bps >= 1e6) { snprintf(v, vl, "%.1f", bps / 1e6); snprintf(u, ul, "MB/s"); }
+    else if (bps >= 1e3) { snprintf(v, vl, "%.0f", bps / 1e3); snprintf(u, ul, "KB/s"); }
+    else { snprintf(v, vl, "%.0f", bps); snprintf(u, ul, "B/s"); }
+}
+
+/* phonebox metricText(): value + unit, plus the sub line */
+static void metric_text(int m, char *v, size_t vl, char *u, size_t ul, char *sub, size_t sl) {
+    u[0] = sub[0] = 0;
+    switch (m) {
+    case M_CPU:
+        snprintf(v, vl, "%.0f", S.cpu); snprintf(u, ul, "%%");
+        if (S.cputemp >= 0) snprintf(sub, sl, "%.0f\xc2\xb0" "C", S.cputemp); else snprintf(sub, sl, "%.30s", S.cpuname);
+        break;
+    case M_GPU:
+        if (!S.has_gpu) { snprintf(v, vl, "\xe2\x80\x94"); snprintf(sub, sl, "No GPU data"); break; }
+        snprintf(v, vl, "%.0f", S.gpu); snprintf(u, ul, "%%");
+        if (S.gputemp >= 0 && S.gpupower >= 0) snprintf(sub, sl, "%.0f\xc2\xb0" "C \xc2\xb7 %.0f W", S.gputemp, S.gpupower);
+        else if (S.gputemp >= 0) snprintf(sub, sl, "%.0f\xc2\xb0" "C", S.gputemp);
+        break;
+    case M_RAM: snprintf(v, vl, "%.1f", S.ram); snprintf(u, ul, "GB"); snprintf(sub, sl, "/ %.0f GB", S.ramt); break;
+    case M_VRAM:
+        snprintf(v, vl, "%.0f", S.vramt > 0 ? S.vram / S.vramt * 100 : 0); snprintf(u, ul, "%%");
+        snprintf(sub, sl, "%.1f / %.0f GB", S.vram, S.vramt);
+        break;
+    case M_NET: case M_DOWN: case M_UP: {
+        fmt_rate(m == M_UP ? S.up : S.down, v, vl, u, ul);
+        if (m == M_NET) {
+            char a[16], b[16];
+            fmt_rate(S.up, a, sizeof a, b, sizeof b);
+            if (S.ping >= 0) snprintf(sub, sl, "\xe2\x86\x91 %s %s \xc2\xb7 %.0f ms", a, b, S.ping);
+            else snprintf(sub, sl, "\xe2\x86\x91 %s %s", a, b);
+        }
+        break;
+    }
+    case M_PING: if (S.ping >= 0) snprintf(v, vl, "%.0f", S.ping); else snprintf(v, vl, "\xe2\x80\x94"); snprintf(u, ul, "ms"); break;
+    case M_GPUTEMP: snprintf(v, vl, "%.0f", S.gputemp < 0 ? 0 : S.gputemp); snprintf(u, ul, "\xc2\xb0" "C"); break;
+    case M_CPUTEMP: snprintf(v, vl, "%.0f", S.cputemp < 0 ? 0 : S.cputemp); snprintf(u, ul, "\xc2\xb0" "C"); break;
+    default: snprintf(v, vl, "?");
+    }
+}
+
+static float metric_max(int m) {
+    if (m == M_RAM) return (float)(S.ramt > 0 ? S.ramt : 1);
+    if (m == M_NET || m == M_DOWN || m == M_UP) {
+        float mx = 1e5f;
+        for (int i = 0; i < HIST; i++) { if (hist[M_DOWN][i] > mx) mx = hist[M_DOWN][i]; if (hist[M_UP][i] > mx) mx = hist[M_UP][i]; }
+        return mx * 1.2f;
+    }
+    if (m == M_PING) { float mx = 50; for (int i = 0; i < HIST; i++) if (hist[M_PING][i] * 1.2f > mx) mx = hist[M_PING][i] * 1.2f; return mx; }
+    return 100;
+}
+
+static void spark(int m, int x, int y, int w, int h, int la, int fa) {
+    int n = hn;
+    if (n < 2) return;
+    float mx = metric_max(m), v[HIST], full[HIST];
+    for (int i = 0; i < n; i++) {
+        float s = hist[m][(hpos - n + i + HIST) % HIST] / mx;
+        v[i] = s < 0 ? 0 : s > 1 ? 1 : s;
+    }
+    for (int i = 0; i < HIST; i++) full[i] = i < HIST - n ? v[0] : v[i - (HIST - n)];
+    cv_spark(&cv, x, y, w, h, full, HIST, MCOL[m], la, fa, fmaxf(2.0f, 1.5f * SC));
+}
+
+/* ---------------------------------------------------------------- widgets */
+
+static void draw_stat(const struct pbw *wd, int w, int h) {
+    card(w, h);
+    float hc = h / SC, wc = w / SC;
+    int m = wd->metric[0];
+    int py = P(clampf(5, 0.09f * hc, 10)), px = P(clampf(8, 0.06f * wc, 12));
+    int ls = P(clampf(9, 0.12f * hc, 11)), vs = P(clampf(16, 0.30f * hc, 40)), us = P(clampf(10, 0.14f * hc, 15)), ss = P(clampf(9.5f, 0.13f * hc, 13));
+    spark(m, 0, h - (int)(h * 0.52f), w, (int)(h * 0.52f) - P(1), 128, 45);
+    char v[24], u[12], sub[64], lbl[32];
+    metric_text(m, v, sizeof v, u, sizeof u, sub, sizeof sub);
+    if (m == M_RAM && S.ramt > 0) snprintf(lbl, sizeof lbl, "RAM (%.0f%%)", S.ram / S.ramt * 100);
+    else snprintf(lbl, sizeof lbl, "%s", MLABEL[m]);
+    int y = py + (int)(ls * 0.95f);
+    cv_text(&cv, F_BOLD, ls, px, y, lbl, MCOL[m], 255, ls * 0.14f, w - 2 * px);
+    y += vs;
+    int x = cv_text(&cv, F_MEDIUM, vs, px, y, v, TEXT, 255, -vs * 0.02f, w - 2 * px);
+    cv_text(&cv, F_REGULAR, us, x + P(2), y, u, MUTED, 255, 0, 0);
+    y += (int)(ss * 1.35f);
+    cv_text(&cv, F_REGULAR, ss, px, y, sub, MUTED, 255, 0, w - 2 * px);
+}
+
+static void draw_gauge(const struct pbw *wd, int w, int h) {
+    card(w, h);
+    int m = wd->metric[0];
+    float r = fminf((float)w, (float)h) * 0.32f, cx = w / 2.0f, cy = h * 0.46f, th = fmaxf(4, r * 0.14f);
+    float pct = hist[m][(hpos + HIST - 1) % HIST] / metric_max(m) * 100;
+    pct = clampf(0, pct, 100);
+    for (int i = 0; i < 120; i++) { /* track + value arc, from 135° sweeping 270° */
+        float a0 = (135 + 270.0f * i / 120) * (float)M_PI / 180, a1 = (135 + 270.0f * (i + 1) / 120) * (float)M_PI / 180;
+        int on = i < pct * 1.2f;
+        cv_line(&cv, cx + r * cosf(a0), cy + r * sinf(a0), cx + r * cosf(a1), cy + r * sinf(a1), th, on ? MCOL[m] : 0xffffff, on ? 255 : 20);
+    }
+    char v[24], u[12], sub[64];
+    metric_text(m, v, sizeof v, u, sizeof u, sub, sizeof sub);
+    int vs = (int)(r * 0.55f), us = vs / 2;
+    int tw = cv_text_w(F_MEDIUM, vs, v, 0) + cv_text_w(F_REGULAR, us, u, 0) + P(2);
+    int x = cv_text(&cv, F_MEDIUM, vs, (int)(cx - tw / 2.0f), (int)(cy + vs * 0.35f), v, TEXT, 255, 0, 0);
+    cv_text(&cv, F_REGULAR, us, x + P(2), (int)(cy + vs * 0.35f), u, MUTED, 255, 0, 0);
+    int ls = P(11);
+    int lw = cv_text_w(F_BOLD, ls, MLABEL[m], ls * 0.14f);
+    cv_text(&cv, F_BOLD, ls, (int)(cx - lw / 2.0f), (int)(cy + r + ls * 1.3f), MLABEL[m], MCOL[m], 255, ls * 0.14f, 0);
+}
+
+static void draw_chart(const struct pbw *wd, int w, int h) {
+    card(w, h);
+    float hc = h / SC;
+    int px = P(12), py = P(10), ls = P(11), bs = P(clampf(18, 0.15f * hc, 34)), ss = P(12.5f);
+    int single = wd->nmetric == 1, net = 1;
+    for (int i = 0; i < wd->nmetric; i++) if (wd->metric[i] != M_DOWN && wd->metric[i] != M_UP) net = 0;
+    char lbl[48];
+    if (single) snprintf(lbl, sizeof lbl, "%s", MNAME[wd->metric[0]]);
+    else if (net) snprintf(lbl, sizeof lbl, "Network");
+    else snprintf(lbl, sizeof lbl, "%s \xc2\xb7 %s", MNAME[wd->metric[0]], MNAME[wd->metric[1]]);
+    for (char *p = lbl; *p; p++) if (*p >= 'a' && *p <= 'z') *p -= 32;
+    int y = py + (int)(ls * 0.95f);
+    cv_text(&cv, F_BOLD, ls, px, y, lbl, MCOL[wd->metric[0]], 255, ls * 0.14f, w / 2);
+    char right[80] = "";
+    if (single && wd->metric[0] == M_CPU) snprintf(right, sizeof right, "%.40s", S.cpuname);
+    else if (single && wd->metric[0] == M_GPU) snprintf(right, sizeof right, "%.40s", S.gpuname);
+    else if (net && S.ping >= 0) snprintf(right, sizeof right, "Ping %.0f ms", S.ping);
+    if (right[0]) {
+        int rw = cv_text_w(F_REGULAR, ls, right, 0);
+        if (rw > w / 2 - px) rw = w / 2 - px;
+        cv_text(&cv, F_REGULAR, ls, w - px - rw, y, right, MUTED, 255, 0, w / 2 - px);
+    }
+    y += (int)(bs * 1.05f);
+    char v[24], u[12], sub[64];
+    if (single) {
+        metric_text(wd->metric[0], v, sizeof v, u, sizeof u, sub, sizeof sub);
+        int x = cv_text(&cv, F_MEDIUM, bs, px, y, v, TEXT, 255, -bs * 0.02f, 0);
+        x = cv_text(&cv, F_REGULAR, ss, x + P(3), y, u, MUTED, 255, 0, 0);
+        if (sub[0]) {
+            int cw = cv_text_w(F_REGULAR, P(11), sub, 0) + P(12);
+            cv_rrect(&cv, x + P(8), y - P(14), cw, P(18), P(9), 0xffffff, 18);
+            cv_text(&cv, F_REGULAR, P(11), x + P(14), y - P(1), sub, MUTED, 255, 0, 0);
+        }
+    } else {
+        int x = px;
+        for (int i = 0; i < wd->nmetric; i++) {
+            int m = wd->metric[i];
+            metric_text(m, v, sizeof v, u, sizeof u, sub, sizeof sub);
+            char t[48];
+            snprintf(t, sizeof t, "%s %s %s", m == M_DOWN ? "\xe2\x86\x93" : m == M_UP ? "\xe2\x86\x91" : MLABEL[m], v, u);
+            x = cv_text(&cv, F_MEDIUM, P(clampf(13, 0.10f * hc, 20)), x, y, t, MCOL[m], 255, 0, 0) + P(12);
+        }
+    }
+    int top = y + P(8), ch = h - top - P(6);
+    for (int g = 1; g < 4; g++) cv_rect(&cv, px, top + ch * g / 4, w - 2 * px, 1 + (int)(SC / 3), 0xffffff, 10);
+    for (int i = wd->nmetric - 1; i >= 0; i--) spark(wd->metric[i], P(2), top, w - P(4), ch, 230, 50);
+}
+
+static void draw_meters(int w, int h) {
+    card(w, h);
+    int px = P(12), py = P(10), ls = P(11), rs = P(12);
+    int y = py + (int)(ls * 0.95f);
+    cv_text(&cv, F_BOLD, ls, px, y, "MEMORY", MCOL[M_RAM], 255, ls * 0.14f, 0);
+    char up[48];
+    long s = (long)S.uptime, d = s / 86400, hr = s % 86400 / 3600, mi = s % 3600 / 60;
+    if (d) snprintf(up, sizeof up, "Up %ld d %ld h", d, hr); else if (hr) snprintf(up, sizeof up, "Up %ld h %ld min", hr, mi); else snprintf(up, sizeof up, "Up %ld min", mi);
+    cv_text(&cv, F_REGULAR, ls, w - px - cv_text_w(F_REGULAR, ls, up, 0), y, up, MUTED, 255, 0, 0);
+    struct { char name[40], txt[32]; double pct; uint32_t c; } r[6];
+    int n = 0;
+    snprintf(r[n].name, sizeof r[n].name, "RAM"); snprintf(r[n].txt, sizeof r[n].txt, "%.1f / %.0f GB", S.ram, S.ramt);
+    r[n].pct = S.ramt > 0 ? S.ram / S.ramt * 100 : 0; r[n++].c = MCOL[M_RAM];
+    if (S.has_gpu && S.vramt > 0) {
+        snprintf(r[n].name, sizeof r[n].name, "VRAM"); snprintf(r[n].txt, sizeof r[n].txt, "%.1f / %.0f GB", S.vram, S.vramt);
+        r[n].pct = S.vram / S.vramt * 100; r[n++].c = MCOL[M_GPU];
+    }
+    for (int i = 0; i < S.ndisk && n < 6; i++) {
+        snprintf(r[n].name, sizeof r[n].name, "%s", !strcmp(S.disk[i].name, "/") ? "DISK" : S.disk[i].name);
+        snprintf(r[n].txt, sizeof r[n].txt, "%.0f%%", S.disk[i].pct);
+        r[n].pct = S.disk[i].pct; r[n++].c = 0x94a3b8;
+    }
+    int top = y + P(10), avail = h - top - P(8), rowh = n ? avail / n : avail;
+    for (int i = 0; i < n; i++) {
+        int ry = top + i * rowh + rowh / 2;
+        cv_text(&cv, F_REGULAR, rs, px, ry - P(2), r[i].name, TEXT, 255, 0, w / 2);
+        cv_text(&cv, F_REGULAR, rs, w - px - cv_text_w(F_REGULAR, rs, r[i].txt, 0), ry - P(2), r[i].txt, MUTED, 255, 0, 0);
+        int tw = w - 2 * px, th = P(6);
+        cv_rrect(&cv, px, ry + P(4), tw, th, th / 2, 0xffffff, 20);
+        int fw = (int)(tw * clampf(0, (float)r[i].pct / 100, 1));
+        if (fw > th) cv_rrect(&cv, px, ry + P(4), fw, th, th / 2, r[i].c, 255);
+    }
+}
+
+/* simple vector weather icons (the phonebox app uses emoji; no colour emoji font here yet) */
+static void wx_icon(float cx, float cy, float s, int code, int day) {
+    int cloud = code >= 2, rain = (code >= 51 && code <= 67) || (code >= 80 && code <= 82) || code >= 95;
+    int snow = (code >= 71 && code <= 77) || code == 85 || code == 86;
+    if (code <= 2) {
+        float ox = cloud ? -s * 0.18f : 0, oy = cloud ? -s * 0.12f : 0;
+        cv_circle(&cv, cx + ox, cy + oy, s * (day ? 0.30f : 0.26f), day ? 0xfbbf24 : 0xe2e8f0, 255);
+    }
+    if (cloud) {
+        uint32_t c = code >= 45 ? 0xcbd5e1 : 0xe2e8f0;
+        cv_circle(&cv, cx - s * 0.20f, cy + s * 0.06f, s * 0.20f, c, 255);
+        cv_circle(&cv, cx + s * 0.05f, cy - s * 0.06f, s * 0.26f, c, 255);
+        cv_circle(&cv, cx + s * 0.28f, cy + s * 0.08f, s * 0.18f, c, 255);
+        cv_rrect(&cv, (int)(cx - s * 0.40f), (int)(cy + s * 0.02f), (int)(s * 0.86f), (int)(s * 0.24f), (int)(s * 0.12f), c, 255);
+    }
+    for (int i = 0; i < 3 && (rain || snow); i++) {
+        float x = cx - s * 0.22f + i * s * 0.22f, y = cy + s * 0.36f;
+        if (rain) cv_line(&cv, x, y, x - s * 0.06f, y + s * 0.16f, fmaxf(2, s * 0.05f), 0x60a5fa, 255);
+        else cv_circle(&cv, x, y + s * 0.08f, s * 0.05f, 0xffffff, 255);
+    }
+}
+
+static const char *wx_text(int c) {
+    if (c == 0) return "Clear";
+    if (c == 1) return "Mainly clear";
+    if (c == 2) return "Partly cloudy";
+    if (c == 3) return "Overcast";
+    if (c == 45 || c == 48) return "Fog";
+    if (c >= 51 && c <= 57) return "Drizzle";
+    if (c >= 61 && c <= 67) return "Rain";
+    if (c >= 71 && c <= 77) return "Snow";
+    if (c >= 80 && c <= 82) return "Showers";
+    if (c == 85 || c == 86) return "Snow showers";
+    if (c >= 95) return "Thunderstorm";
+    return "\xe2\x80\x94";
+}
+
+/* Timezone: a manual override in the settings store ("tz_off_min", e.g. 60 for CET), else the configured
+ * weather place's offset (open-meteo, timezone=auto): the phonebox app uses the phone's own zone, which PhoneKit
+ * doesn't have. */
+static long tz_seconds(void) {
+    const char *o = store_get("tz_off_min", "");
+    return o[0] ? atol(o) * 60 : tz_off;
+}
+
+static time_t local_now(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    long long ms = (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000 + pc_ts_skew;
+    return (time_t)(ms / 1000) + tz_seconds();
+}
+
+static void w_clock(const struct pbw *wd, int w, int h) {
+    float hc = h / SC, wc = w / SC;
+    int y = 0;
+    if (wd->status) { /* status row: connection dot, host, route, the phone's own battery */
+        int ss = P(clampf(10, 0.05f * hc, 12.5f));
+        y = P(4) + ss;
+        cv_circle(&cv, P(3.5f), y - ss * 0.35f, P(3.5f), connected ? 0x22c55e : 0xef4444, 255);
+        char st[96], bat[16] = "";
+        FILE *f = fopen("/sys/class/power_supply/battery/capacity", "r");
+        if (f) { int b; if (fscanf(f, "%d", &b) == 1) snprintf(bat, sizeof bat, " \xc2\xb7 %d%%", b); fclose(f); }
+        snprintf(st, sizeof st, "%s \xc2\xb7 USB%s", S.host[0] ? S.host : "PC", bat);
+        for (char *p = st; *p && *p != ' '; p++) if (*p >= 'a' && *p <= 'z') *p -= 32;
+        cv_text(&cv, F_REGULAR, ss, P(12), y, st, MUTED, 255, ss * 0.02f, w - P(12));
+        y += P(6);
+    }
+    time_t t = local_now();
+    struct tm tm;
+    gmtime_r(&t, &tm);
+    float tf = wd->weather ? 0.48f : 0.6f;
+    int ts = (int)(fminf(tf * hc, 0.30f * wc) * SC);
+    char hh[4], mm[4], sec[4];
+    snprintf(hh, sizeof hh, "%02d", tm.tm_hour); snprintf(mm, sizeof mm, "%02d", tm.tm_min); snprintf(sec, sizeof sec, "%02d", tm.tm_sec);
+    int base = y + (int)(ts * 0.80f);
+    float ls = -ts * 0.04f;
+    int x = cv_text(&cv, F_LIGHT, ts, -(int)(ts * 0.03f), base, hh, TEXT, 255, ls, 0);
+    x = cv_text(&cv, F_LIGHT, ts, x, base, ":", TEXT, 140, ls, 0);
+    x = cv_text(&cv, F_LIGHT, ts, x, base, mm, TEXT, 255, ls, 0);
+    int secs = ts / 5;
+    cv_text(&cv, F_REGULAR, secs, x + (int)(ts * 0.09f), y + (int)(ts * 0.10f) + secs, sec, MUTED, 255, 0, 0);
+    static const char *const DAY[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+    static const char *const MON[] = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
+    char date[48];
+    snprintf(date, sizeof date, "%s %d %s", DAY[tm.tm_wday], tm.tm_mday, MON[tm.tm_mon]);
+    int ds = P(clampf(11, 0.075f * hc, 19));
+    y = base + (int)(ds * 1.45f);
+    cv_text(&cv, F_REGULAR, ds, P(2), y, date, 0xc9d1db, 255, 0, w);
+    if (wd->weather && W.ok) {
+        int is = P(clampf(18, 0.13f * hc, 34));
+        y += P(clampf(2, 0.04f * hc, 14)) + is;
+        wx_icon(P(2) + is * 0.6f, y - is * 0.38f, is * 1.2f, W.code, W.is_day);
+        char tt[16];
+        snprintf(tt, sizeof tt, "%.0f\xc2\xb0", W.t);
+        int tx = cv_text(&cv, F_LIGHT, is, P(2) + (int)(is * 1.5f), y, tt, TEXT, 255, -is * 0.02f, 0);
+        int ms = P(clampf(10, 0.054f * hc, 13));
+        char l1[64], l2[64];
+        snprintf(l1, sizeof l1, "%s%s%s", wx_text(W.code), W.city[0] ? " \xc2\xb7 " : "", W.city);
+        snprintf(l2, sizeof l2, "\xe2\x86\x91%.0f\xc2\xb0 \xe2\x86\x93%.0f\xc2\xb0 \xc2\xb7 Feels like %.0f\xc2\xb0", W.tmax, W.tmin, W.feels);
+        cv_text(&cv, F_REGULAR, ms, tx + P(8), y - (int)(ms * 1.25f), l1, TEXT, 255, 0, w - tx - P(8));
+        cv_text(&cv, F_REGULAR, ms, tx + P(8), y + P(1), l2, MUTED, 255, 0, w - tx - P(8));
+    }
+}
+
+/* hit boxes (screen coordinates) for the touch handler */
+struct hit { int x, y, w, h; char action[48]; };
+#define MAXHIT 48
+static struct hit hits[MAXHIT];
+static int nhits;
+static char pressed_action[48];
+
+static void add_hit(int ox, int oy, int x, int y, int w, int h, const char *a) {
+    if (nhits >= MAXHIT) return;
+    hits[nhits] = (struct hit){ox + x, oy + y, w, h, ""};
+    snprintf(hits[nhits].action, sizeof hits[nhits].action, "%s", a);
+    nhits++;
+}
+
+static void tri(float x0, float y0, float x1, float y1, float x2, float y2, uint32_t c) {
+    int minx = (int)fminf(x0, fminf(x1, x2)), maxx = (int)fmaxf(x0, fmaxf(x1, x2)) + 1;
+    int miny = (int)fminf(y0, fminf(y1, y2)), maxy = (int)fmaxf(y0, fmaxf(y1, y2)) + 1;
+    for (int j = miny; j <= maxy; j++)
+        for (int i = minx; i <= maxx; i++) {
+            int cov = 0;
+            for (int s = 0; s < 4; s++) {
+                float px = i + 0.25f + 0.5f * (s & 1), py = j + 0.25f + 0.5f * (s >> 1);
+                float d0 = (x1 - x0) * (py - y0) - (y1 - y0) * (px - x0);
+                float d1 = (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1);
+                float d2 = (x0 - x2) * (py - y2) - (y0 - y2) * (px - x2);
+                if ((d0 >= 0 && d1 >= 0 && d2 >= 0) || (d0 <= 0 && d1 <= 0 && d2 <= 0)) cov++;
+            }
+            if (cov) cv_rect(&cv, i, j, 1, 1, c, cov == 4 ? 255 : cov * 64);
+        }
+}
+
+static void draw_media(int ox, int oy, int w, int h) {
+    card(w, h);
+    float hc = h / SC, wc = w / SC;
+    int pad = P(clampf(10, 0.07f * hc, 18));
+    int ctl = P(hc >= 230 && wc >= 420 ? 62 : 50);
+    int artsz = (int)fminf(h - 2 * pad - ctl - P(44), w * 0.32f);
+    if (artsz < P(40)) artsz = 0;
+    int tx = pad;
+    if (artsz) {
+        if (art_raw_id == S.art && S.art > 0 && art_raw.len && (art_id_loaded != S.art || art.w != artsz))
+            art_id_loaded = cv_image(&art, (unsigned char *)art_raw.data, (int)art_raw.len, artsz, artsz) == 0 ? S.art : -1;
+        if (art_id_loaded > 0 && art_id_loaded == S.art && art.w == artsz) cv_blit_rounded(&cv, &art, pad, pad, P(12));
+        else {
+            cv_rrect(&cv, pad, pad, artsz, artsz, P(12), 0xffffff, 16);
+            cv_circle(&cv, pad + artsz / 2.0f, pad + artsz / 2.0f, artsz * 0.12f, 0xffffff, 40);
+        }
+        tx = pad + artsz + P(18);
+    }
+    int as = P(clampf(9, 0.045f * hc, 13)), tsz = P(clampf(13, 0.09f * hc, 30)), rs = P(clampf(11, 0.06f * hc, 19));
+    int y = pad + (artsz ? artsz / 2 - (as + tsz + rs) / 2 : 0) + as;
+    char app[40];
+    snprintf(app, sizeof app, "%s", S.media && S.app[0] ? S.app : "Media");
+    for (char *p = app; *p; p++) if (*p >= 'a' && *p <= 'z') *p -= 32;
+    cv_text(&cv, F_MEDIUM, as, tx, y, app, 0x2dd4bf, 255, as * 0.12f, w - tx - pad);
+    y += (int)(tsz * 1.25f);
+    cv_text(&cv, F_MEDIUM, tsz, tx, y, S.media ? (S.title[0] ? S.title : "Unknown track") : "Nothing playing", TEXT, 255, 0, w - tx - pad);
+    y += (int)(rs * 1.3f);
+    cv_text(&cv, F_REGULAR, rs, tx, y, S.media ? (S.artist[0] ? S.artist : "\xe2\x80\x94") : "Press play to resume", MUTED, 255, 0, w - tx - pad);
+    /* progress */
+    int pyb = h - pad - ctl - P(30);
+    int bw = w - 2 * pad, bh = P(4);
+    long pos = S.pos_ms + (S.playing ? now_ms() - S.at_ms : 0);
+    float f = S.dur_ms > 0 ? clampf(0, (float)pos / S.dur_ms, 1) : 0;
+    cv_rrect(&cv, pad, pyb, bw, bh, bh / 2, 0xffffff, 31);
+    if (f > 0) { cv_rrect(&cv, pad, pyb, (int)(bw * f), bh, bh / 2, TEXT, 255); cv_circle(&cv, pad + bw * f, pyb + bh / 2.0f, P(6), TEXT, 255); }
+    char a[16], b[16];
+    snprintf(a, sizeof a, "%ld:%02ld", pos / 60000, pos / 1000 % 60);
+    snprintf(b, sizeof b, "%ld:%02ld", S.dur_ms / 60000, S.dur_ms / 1000 % 60);
+    int sm = P(12);
+    cv_text(&cv, F_REGULAR, sm, pad, pyb + P(20), a, MUTED, 255, 0, 0);
+    cv_text(&cv, F_REGULAR, sm, w - pad - cv_text_w(F_REGULAR, sm, b, 0), pyb + P(20), b, MUTED, 255, 0, 0);
+    /* controls: prev, big play/pause circle, next, volume */
+    int cy = h - pad - ctl / 2;
+    float cx = pad + ctl * 1.6f, ic = ctl * 0.22f;
+    uint32_t icol = rgb_mix(BG, TEXT, S.media ? 255 : 90);
+    float px0 = cx - ctl * 1.05f;
+    tri(px0 + ic * 0.5f, cy - ic, px0 + ic * 0.5f, cy + ic, px0 - ic * 0.9f, cy, icol);
+    cv_rect(&cv, (int)(px0 - ic * 1.1f), (int)(cy - ic), P(3), (int)(2 * ic), icol, 255);
+    add_hit(ox, oy, (int)(px0 - ctl / 2), cy - ctl / 2, ctl, ctl, "/api/media/prev");
+    int down = !strcmp(pressed_action, "/api/media/playpause");
+    cv_circle(&cv, cx, cy, ctl / 2.0f - (down ? P(3) : 0), TEXT, 255);
+    if (S.playing) {
+        cv_rect(&cv, (int)(cx - ic * 0.75f), (int)(cy - ic), (int)(ic * 0.55f), (int)(2 * ic), 0x0b0d10, 255);
+        cv_rect(&cv, (int)(cx + ic * 0.2f), (int)(cy - ic), (int)(ic * 0.55f), (int)(2 * ic), 0x0b0d10, 255);
+    } else tri(cx - ic * 0.6f, cy - ic, cx - ic * 0.6f, cy + ic, cx + ic * 1.0f, cy, 0x0b0d10);
+    add_hit(ox, oy, (int)(cx - ctl / 2), cy - ctl / 2, ctl, ctl, "/api/media/playpause");
+    float nx = cx + ctl * 1.05f;
+    tri(nx - ic * 0.5f, cy - ic, nx - ic * 0.5f, cy + ic, nx + ic * 0.9f, cy, icol);
+    cv_rect(&cv, (int)(nx + ic * 0.9f), (int)(cy - ic), P(3), (int)(2 * ic), icol, 255);
+    add_hit(ox, oy, (int)(nx - ctl / 2), cy - ctl / 2, ctl, ctl, "/api/media/next");
+    if (S.has_vol && w > ctl * 6) {
+        int vx = (int)(nx + ctl * 1.0f), bx = vx + P(18), vw = w - pad - bx - P(34);
+        cv_rect(&cv, vx, cy - P(3), P(4), P(6), MUTED, 255);
+        tri(vx + P(3), cy - P(3), vx + P(3), cy + P(3), vx + P(9), cy - P(8), MUTED);
+        tri(vx + P(3), cy + P(3), vx + P(9), cy + P(8), vx + P(9), cy - P(8), MUTED);
+        if (vw > P(40)) {
+            float vf = clampf(0, (float)S.vol / 100, 1);
+            cv_rrect(&cv, bx, cy - P(2), vw, P(4), P(2), 0xffffff, 31);
+            cv_rrect(&cv, bx, cy - P(2), (int)(vw * vf), P(4), P(2), TEXT, 255);
+            cv_circle(&cv, bx + vw * vf, cy, P(9), TEXT, 255);
+            char vt[8];
+            snprintf(vt, sizeof vt, "%.0f", S.vol);
+            cv_text(&cv, F_REGULAR, P(13), w - pad - cv_text_w(F_REGULAR, P(13), vt, 0), cy + P(5), vt, MUTED, 255, 0, 0);
+        }
+    }
+}
+
+static void draw_shortcuts(const struct pbw *wd, int ox, int oy, int w, int h) {
+    int cols = wd->sc_cols < 1 ? 4 : wd->sc_cols, n = nsc;
+    if (!land && cols > 3) cols = 3;
+    int rows = (n + cols - 1) / cols;
+    if (rows < 1) rows = 1;
+    int gap = P(8);
+    int tw = (w - gap * (cols - 1)) / cols, th = (h - gap * (rows - 1)) / rows;
+    for (int i = 0; i < n; i++) {
+        int x = (i % cols) * (tw + gap), y = (i / cols) * (th + gap);
+        char act[48];
+        snprintf(act, sizeof act, "/api/run/%.30s", sc[i].id);
+        int down = !strcmp(pressed_action, act);
+        cv_rrect(&cv, x, y, tw, th, P(14), sc[i].color, down ? 90 : 38);
+        cv_rrect_stroke(&cv, x, y, tw, th, P(14), fmaxf(1.5f, SC * 0.6f), sc[i].color, 70);
+        float r = fminf(tw, th) * 0.2f;
+        char ini[8];
+        int k = 0;
+        const char *l = sc[i].label;
+        while (*l == ' ') l++;
+        if (*l) { ini[k++] = (char)(*l >= 'a' && *l <= 'z' ? *l - 32 : *l); while ((l[1] & 0xc0) == 0x80 && k < 6) ini[k++] = *++l; }
+        ini[k] = 0;
+        cv_circle(&cv, x + tw / 2.0f, y + th * 0.42f, r, sc[i].color, 255);
+        int is = (int)(r * 1.1f);
+        cv_text(&cv, F_BOLD, is, x + tw / 2 - cv_text_w(F_BOLD, is, ini, 0) / 2, (int)(y + th * 0.42f + is * 0.36f), ini, 0xffffff, 255, 0, 0);
+        int ls = P(clampf(10, th / SC * 0.13f, 14));
+        int lw = cv_text_w(F_MEDIUM, ls, sc[i].label, 0);
+        if (lw > tw - P(8)) lw = tw - P(8);
+        cv_text(&cv, F_MEDIUM, ls, x + (tw - lw) / 2, y + th - P(10), sc[i].label, TEXT, 255, 0, tw - P(8));
+        add_hit(ox, oy, x, y, tw, th, act);
+    }
+}
+
+static void draw_note(const struct pbw *wd, int w, int h) {
+    card(w, h);
+    int pad = P(14), fs = P(15), y = pad + fs;
+    const char *t = wd->text[0] ? wd->text : wd->tname;
+    char line[160];
+    while (*t && y < h - pad / 2) {
+        int n = 0;
+        while (t[n] && t[n] != '\n') n++;
+        snprintf(line, sizeof line, "%.*s", n, t);
+        cv_text(&cv, F_REGULAR, fs, pad, y, line, TEXT, 255, 0, w - 2 * pad);
+        y += (int)(fs * 1.45f);
+        t += n + (t[n] == '\n');
+    }
+}
+
+static void draw_forecast(int w, int h) {
+    card(w, h);
+    int pad = P(12);
+    if (!W.ok) { cv_text(&cv, F_REGULAR, P(13), pad, pad + P(13), "Loading weather\xe2\x80\xa6", MUTED, 255, 0, 0); return; }
+    static const char *const D[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    int n = W.nd < 1 ? 1 : W.nd;
+    time_t t = local_now();
+    struct tm tm;
+    gmtime_r(&t, &tm);
+    int vertical = h > w;
+    if (vertical && n > 5) n = 5;
+    for (int i = 0; i < n; i++) {
+        const char *dn = i == 0 ? "Today" : D[(tm.tm_wday + i) % 7];
+        char hi[12], lo[12];
+        snprintf(hi, sizeof hi, "%.0f\xc2\xb0", W.dmax[i]); snprintf(lo, sizeof lo, "%.0f\xc2\xb0", W.dmin[i]);
+        if (vertical) {
+            int rh = (h - 2 * pad) / n, y = pad + i * rh + rh / 2;
+            cv_text(&cv, F_REGULAR, P(13), pad, y + P(5), dn, TEXT, 255, 0, 0);
+            wx_icon(w * 0.5f, y, rh * 0.7f, W.dcode[i], 1);
+            cv_text(&cv, F_MEDIUM, P(13), w - pad - P(70), y + P(5), hi, TEXT, 255, 0, 0);
+            cv_text(&cv, F_REGULAR, P(13), w - pad - P(32), y + P(5), lo, MUTED, 255, 0, 0);
+        } else {
+            int cw = (w - 2 * pad) / n, x = pad + i * cw + cw / 2;
+            int fs = P(clampf(10, h / SC * 0.08f, 14));
+            cv_text(&cv, F_REGULAR, fs, x - cv_text_w(F_REGULAR, fs, dn, 0) / 2, pad + fs, dn, MUTED, 255, 0, 0);
+            wx_icon(x, h * 0.48f, fminf(cw * 0.7f, h * 0.35f), W.dcode[i], 1);
+            cv_text(&cv, F_MEDIUM, fs, x - cv_text_w(F_MEDIUM, fs, hi, 0) / 2, (int)(h - pad - fs * 1.4f), hi, TEXT, 255, 0, 0);
+            cv_text(&cv, F_REGULAR, fs, x - cv_text_w(F_REGULAR, fs, lo, 0) / 2, h - pad, lo, MUTED, 255, 0, 0);
+        }
+    }
+}
+
+/* A card with a coloured caps title, a right-hand note and rows: text, sub text / status, optional bar. */
+static void draw_list(int w, int h, const char *title, uint32_t tcol, const char *note, const struct row *r, int n,
+                      int bars, const char *empty) {
+    card(w, h);
+    int px = P(12), py = P(10), ls = P(11), fs = P(clampf(11, h / SC * 0.055f, 14)), ss = P(11);
+    int y = py + (int)(ls * 0.95f);
+    cv_text(&cv, F_BOLD, ls, px, y, title, tcol, 255, ls * 0.14f, w / 2);
+    if (note && *note) cv_text(&cv, F_REGULAR, ls, w - px - cv_text_w(F_REGULAR, ls, note, 0), y, note, MUTED, 255, 0, w / 2 - px);
+    y += P(10);
+    if (!n) {
+        const char *e = empty;
+        char line[64];
+        int ly = y + fs + P(4);
+        while (*e && ly < h - P(8)) { /* wrap on spaces */
+            int k = 0, last = -1;
+            while (e[k] && cv_text_w(F_REGULAR, fs, (snprintf(line, sizeof line, "%.*s", k + 1, e), line), 0) < w - 2 * px && k < 62) { if (e[k] == ' ') last = k; k++; }
+            if (e[k] && last > 0) k = last + 1;
+            snprintf(line, sizeof line, "%.*s", k, e);
+            cv_text(&cv, F_REGULAR, fs, px, ly, line, MUTED, 255, 0, w - 2 * px);
+            ly += (int)(fs * 1.4f);
+            e += k ? k : 1;
+        }
+        return;
+    }
+    int rowh = (int)(fs * (bars ? 3.5f : 2.5f));
+    for (int i = 0; i < n && y + rowh <= h - P(4); i++, y += rowh) {
+        int tb = y + fs + P(2);
+        int cw = r[i].c[0] ? cv_text_w(F_MEDIUM, ss, r[i].c, 0) + P(14) : 0;
+        if (!bars && cw) { /* status chip */
+            cv_rrect(&cv, w - px - cw, tb - ss - P(3), cw, ss + P(9), (ss + P(9)) / 2, r[i].col, 40);
+            cv_text(&cv, F_MEDIUM, ss, w - px - cw + P(7), tb, r[i].c, r[i].col, 255, 0, 0);
+        }
+        int bw = bars ? cv_text_w(F_MEDIUM, fs, r[i].b, 0) : 0;
+        cv_text(&cv, F_REGULAR, fs, px, tb, r[i].a, TEXT, 255, 0, w - 2 * px - (bars ? bw + P(10) : cw + P(8)));
+        if (bars) {
+            cv_text(&cv, F_MEDIUM, fs, w - px - bw, tb, r[i].b, TEXT, 255, 0, 0);
+            int ty = tb + P(6), tw = w - 2 * px, th = P(5);
+            cv_rrect(&cv, px, ty, tw, th, th / 2, 0xffffff, 20);
+            int fw = (int)(tw * clampf(0, (float)r[i].pct / 100, 1));
+            if (fw > th) cv_rrect(&cv, px, ty, fw, th, th / 2, r[i].col, 255);
+            if (r[i].c[0]) cv_text(&cv, F_REGULAR, ss, px, ty + th + ss + P(2), r[i].c, MUTED, 255, 0, w - 2 * px);
+        } else if (r[i].b[0]) cv_text(&cv, F_REGULAR, ss, px, tb + ss + P(4), r[i].b, MUTED, 255, 0, w - 2 * px);
+    }
+}
+
+static void draw_procs(int w, int h) {
+    card(w, h);
+    int px = P(12), py = P(10), ls = P(11), fs = P(clampf(11, h / SC * 0.05f, 14));
+    int y = py + (int)(ls * 0.95f);
+    cv_text(&cv, F_BOLD, ls, px, y, "PROCESSES", MCOL[M_CPU], 255, ls * 0.14f, 0);
+    char note[32];
+    snprintf(note, sizeof note, "%d running", p_total);
+    cv_text(&cv, F_REGULAR, ls, w - px - cv_text_w(F_REGULAR, ls, note, 0), y, note, MUTED, 255, 0, 0);
+    int c1 = w - px - P(150), c2 = w - px - P(60);
+    y += P(14) + ls;
+    cv_text(&cv, F_MEDIUM, ls, px, y, "NAME", DIM, 255, ls * 0.1f, 0);
+    cv_text(&cv, F_MEDIUM, ls, c1, y, "CPU", DIM, 255, ls * 0.1f, 0);
+    cv_text(&cv, F_MEDIUM, ls, c2, y, "MEMORY", DIM, 255, ls * 0.1f, 0);
+    int rowh = (int)(fs * 2.0f);
+    for (int i = 0; i < np && y + rowh <= h - P(6); i++) {
+        y += rowh;
+        cv_rect(&cv, px, y - fs - P(8), w - 2 * px, 1 + (int)(SC / 3), 0xffffff, 12);
+        cv_text(&cv, F_REGULAR, fs, px, y, p_rows[i].a, TEXT, 255, 0, c1 - px - P(10));
+        int bw = (int)(P(40) * clampf(0, (float)p_rows[i].pct / 100, 1));
+        cv_rrect(&cv, c1, y - fs / 2 - P(2), P(40), P(4), P(2), 0xffffff, 20);
+        if (bw > P(4)) cv_rrect(&cv, c1, y - fs / 2 - P(2), bw, P(4), P(2), MCOL[M_CPU], 255);
+        cv_text(&cv, F_MEDIUM, fs, c1 + P(46), y, p_rows[i].b, TEXT, 255, 0, 0);
+        cv_text(&cv, F_REGULAR, fs, c2, y, p_rows[i].c, MUTED, 255, 0, 0);
+    }
+    if (!np) cv_text(&cv, F_REGULAR, fs, px, y + rowh, "Loading\xe2\x80\xa6", MUTED, 255, 0, 0);
+}
+
+static void draw_other(const struct pbw *wd, int w, int h) {
+    card(w, h);
+    char t[32];
+    snprintf(t, sizeof t, "%s", wd->tname);
+    if (t[0] >= 'a' && t[0] <= 'z') t[0] -= 32;
+    int fs = P(14);
+    cv_text(&cv, F_MEDIUM, fs, (w - cv_text_w(F_MEDIUM, fs, t, 0)) / 2, h / 2, t, MUTED, 255, 0, w);
+    const char *s = "coming to PhoneKit";
+    cv_text(&cv, F_REGULAR, P(11), (w - cv_text_w(F_REGULAR, P(11), s, 0)) / 2, h / 2 + P(18), s, DIM, 255, 0, w);
+}
+
+static int visible(void) { return pb_owns() && hm_owner() == OWN_PAGE && ui_page() == UI_PAGE_PANEL; }
+
+static void draw_widget(int i) {
+    struct pbw *wd = &pg[cur].w[i];
+    int x, y, w, h;
+    grid_rect(wd, &x, &y, &w, &h);
+    if (cv_alloc(&cv, w, h) < 0) return;
+    cv_clear(&cv, BG);
+    int keep = 0; /* this widget's hit boxes are re-added as it draws */
+    for (int k = 0; k < nhits; k++)
+        if (!(hits[k].x >= x && hits[k].y >= y && hits[k].x < x + w && hits[k].y < y + h)) hits[keep++] = hits[k];
+    nhits = keep;
+    switch (wd->type) {
+    case T_CLOCK: w_clock(wd, w, h); break;
+    case T_STAT: draw_stat(wd, w, h); break;
+    case T_GAUGE: draw_gauge(wd, w, h); break;
+    case T_CHART: draw_chart(wd, w, h); break;
+    case T_METERS: draw_meters(w, h); break;
+    case T_MEDIA: draw_media(x, y, w, h); break;
+    case T_SHORTCUTS: draw_shortcuts(wd, x, y, w, h); break;
+    case T_NOTE: draw_note(wd, w, h); break;
+    case T_FORECAST: draw_forecast(w, h); break;
+    case T_QUOTAS: draw_list(w, h, q_head[0] ? q_head : "AI QUOTAS", 0xa78bfa, NULL, q_rows, nq, 1, "No quota data yet"); break;
+    case T_SESSIONS: {
+        char note[24];
+        snprintf(note, sizeof note, "%d active", ns);
+        draw_list(w, h, "SESSIONS", 0x2dd4bf, note, s_rows, ns, 0, "No agent sessions running");
+        break;
+    }
+    case T_GITHUB: {
+        char note[24] = "";
+        if (g_notif) snprintf(note, sizeof note, "%d notifications", g_notif);
+        draw_list(w, h, "GITHUB", 0xeef2f6, note, g_rows, ng, 0, g_err[0] ? g_err : "Nothing waiting for you");
+        break;
+    }
+    case T_PROCS: draw_procs(w, h); break;
+    default: draw_other(wd, w, h);
+    }
+    fb_blit(fb, &cv, x, y);
+}
+
+static void draw_dots(void) {
+    int dh = P(17);
+    if (cv_alloc(&cv, fb->w, dh) < 0) return;
+    cv_clear(&cv, BG);
+    int dw = P(6), on = P(16), gap = P(6);
+    int total = npg * dw + (on - dw) + (npg - 1) * gap, x = (fb->w - total) / 2;
+    for (int i = 0; i < npg; i++) {
+        int ww = i == cur ? on : dw;
+        cv_rrect(&cv, x, dh / 2 - dw / 2, ww, dw, dw / 2, 0xffffff, i == cur ? 178 : 56);
+        x += ww + gap;
+    }
+    fb_blit(fb, &cv, 0, fb->h - dh);
+}
+
+static void geometry(void) {
+    land = fb->w > fb->h;
+    SC = (land ? fb->h : fb->w) / 360.0f;
+}
+
+void pb_draw(void) {
+    if (!fb || !fb->mem || !have_cfg) return;
+    geometry();
+    fb_fill(fb, 0, 0, fb->w, fb->h, fb_color(fb, BG >> 16, BG >> 8 & 255, BG & 255));
+    nhits = 0;
+    for (int i = 0; i < pg[cur].n; i++) draw_widget(i);
+    draw_dots();
+    fb_present(fb);
+}
+
+static void redraw_types(int mask) {
+    if (!visible()) return;
+    geometry();
+    for (int i = 0; i < pg[cur].n; i++) if (mask & (1 << pg[cur].w[i].type)) draw_widget(i);
+    fb_present(fb);
+}
+
+/* ================================================================ main-loop API */
+
+int pb_owns(void) { return have_cfg && !panel_has_layout(); } /* a PPJ/1 client's layout wins */
 int pb_fd(void) { return notify_r; }
 
 void pb_handle(void) {
     char x[64];
     while (read(notify_r, x, sizeof x) > 0) {}
     pthread_mutex_lock(&lock);
-    char *cfg = cfg_new ? cfg_json : NULL, *st = state_new ? state_json : NULL;
-    if (cfg) { cfg_json = NULL; cfg_new = 0; }
-    if (st) { state_json = NULL; state_new = 0; }
+    struct blob c = in_cfg, s = in_state, a = in_art, w = in_wx, wk = in_work, qb = in_quota, pr = in_procs;
+    memset(&in_cfg, 0, sizeof in_cfg); memset(&in_state, 0, sizeof in_state);
+    memset(&in_art, 0, sizeof in_art); memset(&in_wx, 0, sizeof in_wx);
+    memset(&in_work, 0, sizeof in_work); memset(&in_quota, 0, sizeof in_quota); memset(&in_procs, 0, sizeof in_procs);
     pthread_mutex_unlock(&lock);
-    if (cfg) { free(cfg_copy); cfg_copy = cfg; build_layout(cfg_copy); }
-    if (st) { if (cfg_copy) apply_state(st); free(st); }
+    int full = 0, mask = 0;
+    if (c.data) {
+        int had = have_cfg;
+        load_config(c.data);
+        full = 1;
+        if (!had && have_cfg && hm_owner() == OWN_PAGE && ui_page() != UI_PAGE_PANEL && gadget_mode() == 'B') ui_page_set(UI_PAGE_PANEL);
+    }
+    if (s.data) {
+        load_state(s.data);
+        mask |= 1 << T_STAT | 1 << T_GAUGE | 1 << T_CHART | 1 << T_METERS | 1 << T_MEDIA | 1 << T_CLOCK;
+    }
+    if (w.data) { load_weather(w.data); mask |= 1 << T_CLOCK | 1 << T_FORECAST; }
+    if (a.data) {
+        free(art_raw.data);
+        art_raw = a;              /* kept: decoded by draw_media at its size */
+        art_raw_id = (long)art_want;
+        art_id_loaded = -1;
+        a.data = NULL;
+        mask |= 1 << T_MEDIA;
+    }
+    if (wk.data) { load_work(wk.data); mask |= 1 << T_SESSIONS | 1 << T_GITHUB; }
+    if (qb.data) { load_quotas(qb.data); mask |= 1 << T_QUOTAS; }
+    if (pr.data) { load_procs(pr.data); mask |= 1 << T_PROCS; }
+    free(c.data); free(s.data); free(a.data); free(w.data); free(wk.data); free(qb.data); free(pr.data);
+    if (full) { if (visible()) pb_draw(); }
+    else if (mask) redraw_types(mask);
 }
 
-/* Once a second from the main loop: re-flow after a rotation. */
+/* Once a second (main loop): the clock, media progress, re-flow after rotation, weather every 15 min. */
 void pb_tick(void) {
-    if (cfg_copy && built_landscape >= 0 && panel_landscape() != built_landscape) build_layout(cfg_copy);
+    static int last_land = -1;
+    static long wx_at;
+    if (!have_cfg) return;
+    if (now_ms() - wx_at > 15 * 60 * 1000) { wx_at = now_ms(); wx_want = 1; }
+    int procs = 0;
+    for (int i = 0; i < pg[cur].n; i++) procs |= pg[cur].w[i].type == T_PROCS;
+    want_procs = procs && visible();
+    int l = fb && fb->w > fb->h;
+    if (l != last_land) { last_land = l; if (visible()) { pb_draw(); return; } }
+    redraw_types(1 << T_CLOCK | (S.playing ? 1 << T_MEDIA : 0));
 }
 
-/* A tap on one of our buttons (ids "pb.run.<shortcut>", "pb.media.<action>"). Returns 1 if it was ours. */
-int pb_event(const char *id) {
-    char path[160];
-    if (!strncmp(id, "pb.run.", 7)) snprintf(path, sizeof path, "/api/run/%s", id + 7);
-    else if (!strncmp(id, "pb.media.", 9)) snprintf(path, sizeof path, "/api/media/%s", id + 9);
-    else return !strncmp(id, "pb.", 3);
-    post(path);
+/* Touch (logical px). Taps on hit boxes POST; horizontal swipes change the page. */
+int pb_touch(const int *ids, const int *xs, const int *ys, int n) {
+    static int tid = -1, x0, y0, xl, yl;
+    static struct hit pressed;
+    int idx = -1;
+    for (int i = 0; i < n; i++) if (ids[i] == tid) idx = i;
+    if (tid >= 0 && idx < 0) { /* lifted */
+        tid = -1;
+        int dx = xl - x0, dy = yl - y0, had = pressed_action[0] != 0;
+        pressed_action[0] = 0;
+        if (abs(dx) > fb->w / 8 && abs(dx) > abs(dy)) pb_page_step(dx < 0 ? 1 : -1);
+        else {
+            if (had && xl >= pressed.x && xl < pressed.x + pressed.w && yl >= pressed.y && yl < pressed.y + pressed.h) post(pressed.action);
+            if (had) redraw_types(1 << T_MEDIA | 1 << T_SHORTCUTS);
+        }
+        return 1;
+    }
+    if (tid < 0 && n > 0) {
+        tid = ids[0]; x0 = xl = xs[0]; y0 = yl = ys[0];
+        for (int k = 0; k < nhits; k++)
+            if (x0 >= hits[k].x && x0 < hits[k].x + hits[k].w && y0 >= hits[k].y && y0 < hits[k].y + hits[k].h) {
+                pressed = hits[k];
+                snprintf(pressed_action, sizeof pressed_action, "%s", hits[k].action);
+                redraw_types(1 << T_MEDIA | 1 << T_SHORTCUTS);
+                break;
+            }
+        return 1;
+    }
+    if (idx >= 0) { xl = xs[idx]; yl = ys[idx]; }
     return 1;
 }
 
-int pb_stats(char *b, size_t len) {
-    return snprintf(b, len, "connected %d\nconfig_version %lld\nconfigs %lu\nstates %lu\nposts %lu\nbinds %d\n",
-                    connected, cfg_version, n_cfgs, n_states, n_posts, nbinds);
+/* Side buttons / swipes: next or previous phonebox page (wraps). Returns 0 if handled. */
+int pb_page_set(int n) {
+    if (!pb_owns() || n < 0 || n >= npg) return -1;
+    cur = n;
+    if (visible()) pb_draw();
+    return 0;
 }
 
-void pb_init(void) {
+int pb_page_step(int d) {
+    if (!pb_owns() || npg < 1) return 1;
+    cur = (cur + d + npg) % npg;
+    pb_draw();
+    return 0;
+}
+
+int pb_stats(char *b, size_t len) {
+    return snprintf(b, len, "connected %d\nconfig_version %lld\nconfigs %lu\nstates %lu\nposts %lu\npages %d\npage %d\nweather %d\n"
+                    "tz_off %ld\nart %ld\nhits %d\n",
+                    connected, cfg_version, n_cfgs, n_states, n_posts, npg, cur, W.ok, tz_off, art_id_loaded, nhits);
+}
+
+void pb_init(struct fb *f) {
+    fb = f;
+    gfx_init();
     int pf[2];
     if (pipe2(pf, O_CLOEXEC | O_NONBLOCK) < 0) return;
     notify_r = pf[0]; notify_w = pf[1];
     pthread_t t;
-    pthread_create(&t, NULL, http_thread, NULL);
-    pthread_detach(t);
+    pthread_create(&t, NULL, http_thread, NULL); pthread_detach(t);
+    pthread_create(&t, NULL, side_thread, NULL); pthread_detach(t);
 }

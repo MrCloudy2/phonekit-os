@@ -46,6 +46,27 @@ void fb_set_rotation(struct fb *f, int deg); /* swaps w/h for 90/270; redraw aft
 int fb_present(struct fb *f);  /* flush iff something was drawn since last present; 1 = flushed */
 void fb_damage_all(struct fb *f);
 int fb_stats(struct fb *f, char *buf, size_t len);
+void fb_damage_rect(struct fb *f, int x0, int y0, int w, int h); /* LOGICAL rect */
+
+/* gfx.c — anti-aliased drawing (PHONEBOX look): canvases are 0xRRGGBB, logical orientation */
+enum { F_LIGHT, F_REGULAR, F_MEDIUM, F_BOLD, GFX_FONTS };
+struct canvas { int w, h; size_t cap; uint32_t *px; };
+void gfx_init(void);
+int cv_alloc(struct canvas *c, int w, int h);
+void cv_clear(struct canvas *c, uint32_t rgb);
+uint32_t rgb_mix(uint32_t a, uint32_t b, int t);
+void cv_rect(struct canvas *c, int x, int y, int w, int h, uint32_t rgb, int a);
+void cv_rrect(struct canvas *c, int x, int y, int w, int h, int r, uint32_t rgb, int a);
+void cv_rrect_stroke(struct canvas *c, int x, int y, int w, int h, int r, float t, uint32_t rgb, int a);
+void cv_circle(struct canvas *c, float cx, float cy, float r, uint32_t rgb, int a);
+void cv_line(struct canvas *c, float x0, float y0, float x1, float y1, float th, uint32_t rgb, int a);
+void cv_spark(struct canvas *c, int x, int y, int w, int h, const float *v, int n, uint32_t rgb, int line_a, int fill_a, float th);
+int cv_text_w(int font, int size, const char *s, float ls);
+int cv_text(struct canvas *c, int font, int size, int x, int y, const char *s, uint32_t rgb, int a, float ls, int max_w);
+int cv_ascent(int font, int size);
+int cv_image(struct canvas *out, const unsigned char *data, int len, int w, int h);
+void cv_blit_rounded(struct canvas *c, const struct canvas *src, int x, int y, int r);
+void fb_blit(struct fb *f, const struct canvas *c, int lx, int ly);
 void fb_stats_reset(struct fb *f);
 int fb_text(struct fb *f, int x, int y, int scale, const char *s, uint32_t fg, uint32_t bg);
 int fb_open(struct fb *f, const char *path);
@@ -209,11 +230,15 @@ int adbd_stats(char *b, size_t len);
 int adbd_reverse_active(int port);
 
 /* pbclient.c — PHONEBOX mode: native client of the phonebox desktop agent (through adb reverse) */
-void pb_init(void);
+void pb_init(struct fb *f);
 int pb_fd(void);
 void pb_handle(void);
 void pb_tick(void);
-int pb_event(const char *id);
+int pb_owns(void);                    /* phonebox pages are shown (config received, no PPJ/1 layout active) */
+void pb_draw(void);
+int pb_touch(const int *ids, const int *xs, const int *ys, int n);
+int pb_page_step(int d);
+int pb_page_set(int n);
 int pb_stats(char *b, size_t len);              /* mode B self-heal (once a second) */
 const char *gadget_state(void);      /* UDC state, "configured" when a host is attached */
 int gadget_reconnect(int off_ms);    /* soft disconnect/connect */

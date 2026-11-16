@@ -152,6 +152,7 @@ static void draw_widget(struct widget *w) {
 
 void panel_draw(void) {
     if (!fb || !fb->mem) return;
+    if (pb_owns()) { pb_draw(); return; } /* PHONEBOX: the phonebox agent's pages */
     uint32_t bg = C(10, 12, 18);
     fb_fill(fb, 0, 0, fb->w, fb->h, bg);
     struct page *p = &pages[cur];
@@ -310,7 +311,6 @@ int panel_handle(const char *s, int len, char *r, size_t rn) {
 int panel_landscape(void) { return fb && fb->w > fb->h; }
 
 static void send_event(const struct widget *w, const char *type, int with_value) {
-    if (!strncmp(w->id, "pb.", 3)) { if (!strcmp(type, "press")) pb_event(w->id); return; } /* PHONEBOX widgets */
     if (!event_sink) return;
     char b[160];
     if (with_value) snprintf(b, sizeof b, "{\"op\":\"event\",\"id\":\"%s\",\"type\":\"%s\",\"value\":%g}", w->id, type, w->value);
@@ -343,6 +343,7 @@ static void slider_to(struct widget *w, int x) {
 }
 
 int panel_touch(const int *ids, const int *xs, const int *ys, int n) {
+    if (pb_owns()) return pb_touch(ids, xs, ys, n);
     int idx = -1;
     for (int i = 0; i < n; i++) if (ids[i] == touch_id) idx = i;
     if (touch_id >= 0 && idx < 0) { /* lifted */
@@ -368,6 +369,7 @@ int panel_touch(const int *ids, const int *xs, const int *ys, int n) {
 }
 
 int panel_page_step(int d) {
+    if (pb_owns()) return pb_page_step(d);
     for (int k = 1; k <= PAGES; k++) {
         int p = cur + d * k;
         if (p < 0 || p >= PAGES) return 1; /* wrapped out of the panel pages */

@@ -495,6 +495,8 @@ static void dispatch(struct app *a, char *l, size_t len) {
         int n2 = js ? panel_handle(js + 1, (int)strlen(js + 1), rep, sizeof rep) : 0;
         data(rep, n2 > 0 ? (size_t)n2 : 0);
         ok(NULL);
+    } else if (!strcmp(c, "phonebox") && argc > 2 && !strcmp(argv[1], "page")) {
+        if (pb_page_set(atoi(argv[2])) < 0) err("no such phonebox page"); else ok(NULL);
     } else if (!strcmp(c, "adb") || !strcmp(c, "phonebox")) {
         char b2[512];
         int n2 = c[0] == 'a' ? adbd_stats(b2, sizeof b2) : pb_stats(b2, sizeof b2);
