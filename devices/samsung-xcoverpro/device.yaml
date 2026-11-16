@@ -66,39 +66,54 @@ boot_timing:
   reboot_cmd_to_serial_s: 25-30 # from `adb reboot recovery` in LineageOS (includes ROM shutdown)
 
 quirks:
-  - DECON fbdev pan never re-enables the window after a powerdown (decon_set_par is #if 0'd in
-    decon_pan_display): after unblank, force FBIOPUT_VSCREENINFO (fb_set_par) or the panel stays black
-  - DECON pan hard-codes ABGR8888: the panel shows the framebuffer as BGR (FB_SWAP_RB)
-  - sensor hub (CHUB) firmware is built into the kernel; power it on via
-    /sys/devices/platform/11980000.contexthub/poweron; device_orientation (type 27) gives rotation events
-  - LineageOS restores recovery on every boot unless persist.vendor.recovery_update=false
-  - kernel services the watchdog itself; userspace needn't touch /dev/watchdog
-  - no console device ("unable to open an initial console"); log through /dev/kmsg
-  - logs from the previous boot are in /proc/last_kmsg (contains binary; use grep -a). A forced reset
-    (Vol Down + Power) may boot recovery again, and any further boot overwrites the log, so grab it right away
-  - LineageOS is userdebug: `adb root` + dd to /dev/block/by-name/recovery flashes without download mode
-  - a kernel that hangs early bootloops into recovery even after a forced reset; only download mode recovers
-  - CONFIG_ESE_SECURE / SAMSUNG_NFC must stay on (disabling hangs boot); SM5713 flash LED needs fimc-is
-  - kernel waits for async probes before /init (async_synchronize_full): PROBE_PREFER_ASYNCHRONOUS gains nothing
+  - "DECON fbdev pan never re-enables the window after a powerdown (decon_set_par is #if 0'd in decon_pan_display): after unblank, force FBIOPUT_VSCREENINFO (fb_set_par) or the panel stays black"
+  - "DECON pan hard-codes ABGR8888: the panel shows the framebuffer as BGR (FB_SWAP_RB)"
+  - "sensor hub (CHUB) firmware is built into the kernel; power it on via /sys/devices/platform/11980000.contexthub/poweron; device_orientation (type 27) gives rotation events"
+  - "LineageOS restores recovery on every boot unless persist.vendor.recovery_update=false"
+  - "kernel services the watchdog itself; userspace needn't touch /dev/watchdog"
+  - "no console device (\"unable to open an initial console\"); log through /dev/kmsg"
+  - "logs from the previous boot are in /proc/last_kmsg (contains binary; use grep -a). A forced reset (Vol Down + Power) may boot recovery again, and any further boot overwrites the log, so grab it right away"
+  - "LineageOS is userdebug: `adb root` + dd to /dev/block/by-name/recovery flashes without download mode"
+  - "a kernel that hangs early bootloops into recovery even after a forced reset; only download mode recovers"
+  - "CONFIG_ESE_SECURE / SAMSUNG_NFC must stay on (disabling hangs boot); SM5713 flash LED needs fimc-is"
+  - "kernel waits for async probes before /init (async_synchronize_full): PROBE_PREFER_ASYNCHRONOUS gains nothing"
+  - "RNDIS never transmits after the first bind of a fresh function at boot: paneld re-links it when RX grows but TX stays 0"
+  - "NCM enumerates but never transmits on this kernel: use RNDIS"
+  - "Wi-Fi firmware lives on vendor inside super (dynamic partitions): copied from the ROM into prebuilt/firmware, MAC from efs/wifi/.mac.info"
 
 usb:
   udc: 13200000.dwc3
   speed: high-speed
   gadget_configfs: true          # verified 2026-11-15 (paneld creates acm.gs0 → ttyGS0)
   functions_available: [acm, ncm, rndis, ffs, mtp, ptp, midi, accessory, audio_source]  # as used by LineageOS
-  otg_host: TBD
+  otg_host: untested
 
 power:
   charger: SM5713 (sysfs power_supply/sm5713-charger, battery, usb, ac, otg)
   fuel_gauge: SM5713 (power_supply/sm5713-fuelgauge)
   charging_without_android: works (charge_type Fast, ~33-190 mA observed under paneld)
-  charge_limit_method: TBD (M4)
-  boots_without_battery: TBD
+  charge_limit_method: "battery/charging_enabled (0/1), re-asserted every 30 s; batt_slate_mode for power measurement"
+  boots_without_battery: untested
 
 wifi:
-  chip: Samsung SCSC (S620)
-  firmware: vendor partition (wifi/*.hcf, hydra_config.sdb, platform.txt)
-  status: not started
+  chip: Samsung SCSC (S620), driver built into the kernel (CONFIG_SCSC_WLAN), wlan0 at boot
+  firmware: "/vendor/etc/wifi (2 MB, mx140.bin + HCF), copied from the ROM; MAC from /mnt/vendor/efs/wifi/.mac.info"
+  status: "joins WPA2, DHCP, ~13 mW connected (M10); WPA3 pending"
 
 milestones:
   M0: confirmed 2026-11-15
+  M1: partial (24 h soak pending)
+  M2: confirmed 2026-11-15
+  M3: confirmed 2026-11-15
+  M4: partial (72 h window, battery-less pending)
+  M4b: partial 2026-11-16
+  M5: confirmed 2026-11-15
+  M6: confirmed 2026-11-15
+  M6b: partial (webcam research)
+  M6e: confirmed 2026-11-16
+  M6g: partial 2026-11-16
+  M7: confirmed 2026-11-16
+  M10: partial 2026-11-16
+  M11: partial 2026-11-17
+  M12b: confirmed 2026-11-16 (stock phonebox agent 0.9.14)
+  M14: partial 2026-11-17

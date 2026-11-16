@@ -21,6 +21,9 @@ Nice to have: kernel source for that ROM (for trimming and adding gadget functio
 and a userdebug/rooted ROM for `make deploy`.
 
 ## Stage 1: Create the device folder
+Tip: `scripts/probe.sh` reads most hardware facts from the running phone (in TWRP/LineageOS recovery with adb, or
+later under PhoneKit) and prints a `device.yaml` draft: `adb push scripts/probe.sh /tmp/ && adb shell sh /tmp/probe.sh`.
+
 ```bash
 cp -r devices/_template devices/<vendor>-<codename>
 ```
@@ -107,6 +110,7 @@ for MOUSE/KEYBOARD/SCREEN touch, `CONFIG_USB_CONFIGFS_MASS_STORAGE`).
   can hang the kernel if disabled.
 
 ## Stage 7: Record and contribute
+- `scripts/devicedb.py check` validates your record; `scripts/devicedb.py table` refreshes `docs/devices.md` (CI checks both).
 - Fill in `device.yaml` with every verified fact (`verified: true` only when you tested it).
 - Add `docs/verification/<device>.md` with what you tested, or extend the table in the README.
 - Open a pull request; see [CONTRIBUTING.md](../CONTRIBUTING.md). Partial ports (say, display and touch only)

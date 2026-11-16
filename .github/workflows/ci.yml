@@ -1,0 +1,28 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user-static python3-yaml
+      - name: Device database
+        run: scripts/devicedb.py check
+      - name: Device table is up to date
+        run: scripts/devicedb.py table && git diff --exit-code docs/devices.md
+      - name: Fuzz the JSON tokenizer (ASan + UBSan)
+        run: |
+          gcc -fsanitize=address,undefined -fno-sanitize-recover=all -g -D_GNU_SOURCE -Ipaneld tests/fuzz_json.c paneld/json.c -o fuzz_json
+          ./fuzz_json 300000
+      - name: Build paneld (static aarch64) and run it under qemu
+        run: |
+          make out/samsung-xcoverpro/paneld
+          make test
+      - name: Shell scripts parse
+        run: for f in scripts/*.sh; do bash -n "$f"; done

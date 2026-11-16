@@ -499,7 +499,8 @@ works unmodified. (A bridge in our own host agent, the first plan, isn't needed.
 
 ### Phase 6: Device database and porting skill
 
-#### M15 · Device database v1 ⬜
+#### M15 · Device database v1 🟨
+*2026-11-17: `scripts/devicedb.py` validates records and generates `docs/devices.md`; CI checks both (`.github/workflows/ci.yml`). Needs 2 more devices.*
 **Deliverables**
 - `devices/<vendor>-<codename>/device.yaml` schema:
   - identity: name, codename, SoC, RAM, panel resolution/size/type, touch controller
@@ -537,7 +538,8 @@ works unmodified. (A bridge in our own host agent, the first plan, isn't needed.
 - [ ] The XCover Pro passes the full kit; the report is generated, not hand-written.
 - [ ] A deliberately broken build (e.g. leaking fds, mishandled replug) is caught by the kit.
 
-#### M16 · Porting skill ⬜
+#### M16 · Porting skill 🟨
+*2026-11-17: `scripts/probe.sh` drafts a device.yaml from a running phone (PhoneKit or any root recovery shell); PROMPT.md + porting guide exist; Claude skill next.*
 **Deliverables**
 - A Claude skill (plus a plain-text porting guide) that takes a phone model and:
   checks unlockability and existing kernel trees (LineageOS, TWRP, postmarketOS), drafts
