@@ -65,6 +65,8 @@ static void key_tap(int mods, int code) {
     kbd_report(0, 0);
 }
 
+void hm_key_tap(int mods, int code) { key_tap(mods, code); } /* RESCUE: blind typing over the HID keyboard */
+
 /* ---------------------------------------------------------------- trackpad */
 // Gesture tracking over a region (whole screen in trackpad mode, the top strip in
 // keyboard mode). One finger moves; tap = left, 2-finger tap = right, 3-finger tap =

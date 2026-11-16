@@ -199,7 +199,8 @@ int json_get(const char *s, const jtok *t, int n, int obj, const char *key);
 int json_str(const char *s, const jtok *t, int i, char *out, size_t len);
 double json_num(const char *s, const jtok *t, int i, double dflt);
 
-void hm_show_phonebox(void);       /* switch to the PHONEBOX page (phonebox agent "am start") */
+void hm_show_phonebox(void);
+void hm_key_tap(int mods, int code); /* one key press + release on the USB HID keyboard */       /* switch to the PHONEBOX page (phonebox agent "am start") */
 
 /* panel.c — PPJ/1 widget engine (PANEL mode) */
 void panel_init(struct fb *f);

@@ -304,10 +304,46 @@ static const struct key KB[6][12] = {
      K("j", "j", "J", "~"), K("k", "k", "K", "`"), K("l", "l", "L", "|"), K(";", ";", ":", ":"), K("'", "'", "\"", "\""), {"Enter", "\r", "\r", "\r", 1}},
     {{"Shift", NULL, NULL, NULL, 1.5f}, K("z", "z", "Z", "("), K("x", "x", "X", ")"), K("c", "c", "C", "{"), K("v", "v", "V", "}"), K("b", "b", "B", "["),
      K("n", "n", "N", "]"), K("m", "m", "M", "<"), K(",", ",", "<", "<"), K(".", ".", ">", ">"), {"Sym", NULL, NULL, NULL, 1.5f}},
-    {{"Home", "\x1b[H", "\x1b[H", "\x1b[H", 1.5f}, {"End", "\x1b[F", "\x1b[F", "\x1b[F", 1.5f}, {" ", " ", " ", " ", 6}, {"|", "|", "|", "|", 1}, {"\\", "\\", "\\", "\\", 1}, {"~", "~", "~", "~", 1}},
+    {{"Home", "\x1b[H", "\x1b[H", "\x1b[H", 1.5f}, {"End", "\x1b[F", "\x1b[F", "\x1b[F", 1.5f}, {" ", " ", " ", " ", 5}, {"|", "|", "|", "|", 1}, {"\\", "\\", "\\", "\\", 1}, {"Out", NULL, NULL, NULL, 2}},
 };
 static const int KB_N[6] = {12, 12, 12, 12, 11, 6};
 static int shift, ctrl, altk, sym;
+static int hid_out; /* keys go to the server's USB keyboard (blind typing, e.g. to start a serial login) */
+
+/* ASCII -> USB HID usage (US layout) + whether Shift is needed. 0 = no key. */
+static int ascii_hid(unsigned char c, int *shift_needed) {
+    static const char sh_digits[] = ")!@#$%^&*(";
+    *shift_needed = 0;
+    if (c >= 'a' && c <= 'z') return 0x04 + (c - 'a');
+    if (c >= 'A' && c <= 'Z') { *shift_needed = 1; return 0x04 + (c - 'A'); }
+    if (c >= '1' && c <= '9') return 0x1e + (c - '1');
+    if (c == '0') return 0x27;
+    const char *d = strchr(sh_digits, c);
+    if (d && c) { *shift_needed = 1; return d == sh_digits ? 0x27 : 0x1e + (int)(d - sh_digits) - 1; }
+    static const struct { char plain, shifted; int code; } P[] = {
+        {'-', '_', 0x2d}, {'=', '+', 0x2e}, {'[', '{', 0x2f}, {']', '}', 0x30}, {'\\', '|', 0x31},
+        {';', ':', 0x33}, {'\'', '"', 0x34}, {'`', '~', 0x35}, {',', '<', 0x36}, {'.', '>', 0x37}, {'/', '?', 0x38}};
+    for (size_t i = 0; i < sizeof P / sizeof P[0]; i++) {
+        if (c == (unsigned char)P[i].plain) return P[i].code;
+        if (c == (unsigned char)P[i].shifted) { *shift_needed = 1; return P[i].code; }
+    }
+    if (c == '\r' || c == '\n') return 0x28;
+    if (c == 0x1b) return 0x29;
+    if (c == 0x7f || c == '\b') return 0x2a;
+    if (c == '\t') return 0x2b;
+    if (c == ' ') return 0x2c;
+    return 0;
+}
+
+/* Special keys by label, for the HID path (arrows and navigation are escape sequences on the serial path). */
+static int named_hid(const char *lab) {
+    static const struct { const char *l; int code; } N[] = {{"Right", 0x4f}, {"Left", 0x50}, {"Down", 0x51}, {"Up", 0x52},
+        {"PgUp", 0x4b}, {"PgDn", 0x4e}, {"Home", 0x4a}, {"End", 0x4d}, {"Esc", 0x29}, {"Tab", 0x2b}, {"Bksp", 0x2a}, {"Enter", 0x28}};
+    for (size_t i = 0; i < sizeof N / sizeof N[0]; i++) if (!strcmp(lab, N[i].l)) return N[i].code;
+    return 0;
+}
+
+static unsigned long hid_keys;
 static int pr_r = -1, pr_c = -1, touch_id = -1;
 
 static void key_rect(int r, int c, int *x, int *y, int *w, int *h) {
@@ -324,12 +360,12 @@ static void draw_key(int r, int c) {
     key_rect(r, c, &x, &y, &w, &h);
     const struct key *k = &KB[r][c];
     int mod = (k->lab[0] == 'C' && !strcmp(k->lab, "Ctrl") && ctrl) || (!strcmp(k->lab, "Alt") && altk) ||
-              (!strcmp(k->lab, "Shift") && shift) || (!strcmp(k->lab, "Sym") && sym);
+              (!strcmp(k->lab, "Shift") && shift) || (!strcmp(k->lab, "Sym") && sym) || (!strcmp(k->lab, "Out") && hid_out);
     int down = r == pr_r && c == pr_c;
     if (cv_alloc(&cv, w, h) < 0) return;
     cv_clear(&cv, 0x000000);
     cv_rrect(&cv, 0, 0, w, h, h / 6, mod ? 0x2563eb : down ? 0x3b4252 : 0x1f232b, 255);
-    const char *lab = k->lab;
+    const char *lab = !strcmp(k->lab, "Out") ? (hid_out ? "To: KBD" : "To: TTY") : k->lab;
     char one[8];
     if (k->out && !k->lab[1] && k->lab[0] >= 'a' && k->lab[0] <= 'z') { snprintf(one, sizeof one, "%s", sym ? k->sym : shift ? k->shift : k->lab); lab = one; }
     else if (k->out && strlen(k->lab) <= 2 && (sym || shift) && k->sym && (unsigned char)k->lab[0] < 0x80) { snprintf(one, sizeof one, "%s", sym ? k->sym : k->shift); lab = one; }
@@ -351,6 +387,20 @@ static void send_key(const struct key *k) {
     if (!strcmp(k->lab, "Shift")) { shift = !shift; draw_keyboard(); return; }
     if (!strcmp(k->lab, "Sym")) { sym = !sym; draw_keyboard(); return; }
     if (!strcmp(k->lab, "Hide")) { term_toggle_keyboard(); return; }
+    if (!strcmp(k->lab, "Out")) { hid_out = !hid_out; logmsg("rescue: typing to %s", hid_out ? "the USB keyboard" : "the serial console"); term_draw(); return; }
+    if (hid_out) { /* blind typing on the server's own console */
+        int mods = (ctrl ? 0x01 : 0) | (altk ? 0x04 : 0), code = named_hid(k->lab), sh = 0;
+        if (!code) {
+            const char *o = sym ? k->sym : shift ? k->shift : k->out;
+            if (o && strlen(o) == 1) code = ascii_hid((unsigned char)o[0], &sh);
+        }
+        if (code) { hm_key_tap(mods | (sh ? 0x02 : 0), code); hid_keys++; }
+        int redraw = ctrl || altk || (shift && strcmp(k->lab, "Shift"));
+        ctrl = altk = 0;
+        if (shift && strcmp(k->lab, "Shift")) shift = 0;
+        if (redraw) draw_keyboard();
+        return;
+    }
     if (!strcmp(k->lab, "Size")) { /* tell the server our size (serial lines have none) */
         char b[48];
         int l = snprintf(b, sizeof b, "stty rows %d cols %d\r", rows, cols);
@@ -443,6 +493,11 @@ void term_draw(void) {
             fb_blit(fb, &cv, 0, kb_y - 70);
         }
     }
+    if (hid_out && cv_alloc(&cv, fb->w, 56) == 0) {
+        cv_clear(&cv, 0x2563eb);
+        cv_text(&cv, F_MEDIUM, 30, 20, 40, "Typing on the server's USB keyboard (blind) - tap To: KBD to go back", 0xffffff, 255, 0, fb->w - 40);
+        fb_blit(fb, &cv, 0, kb_y - 56);
+    }
     draw_keyboard();
     fb_present(fb);
 }
@@ -527,8 +582,8 @@ int term_touch(const int *ids, const int *xs, const int *ys, int n) {
 }
 
 int term_stats(char *b, size_t len) {
-    return snprintf(b, len, "active %d\ntty %s\nfd %d\ngrid %dx%d\ncursor %d,%d\nalt %d\nbytes_in %lu\nbytes_out %lu\n",
-                    active, tty, fd, cols, rows, cx, cy, alt, bytes_in, bytes_out);
+    return snprintf(b, len, "active %d\ntty %s\nfd %d\ngrid %dx%d\ncursor %d,%d\nalt %d\nbytes_in %lu\nbytes_out %lu\nout %s\nhid_keys %lu\n",
+                    active, tty, fd, cols, rows, cx, cy, alt, bytes_in, bytes_out, hid_out ? "usb-keyboard" : "serial", hid_keys);
 }
 
 /* Types text into the console (ctl "rescue type"; tests). */

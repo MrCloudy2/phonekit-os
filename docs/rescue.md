@@ -30,7 +30,11 @@ and log in.
 - While RESCUE is on, the port is the server's console; PhoneKit's own debug shell comes back when you leave RESCUE.
   The GUD display is left out of the USB device in RESCUE, so the server doesn't get a phantom monitor.
 
+## A server that was never set up
+Tap **To: KBD**: the keys now go to the server as a USB keyboard (its own console, blind). Log in on the console,
+type `systemctl start serial-getty@ttyACM2` (or whatever tty the phone's interface 04 got), tap **To: TTY** again and
+press Enter: the login prompt appears on the phone. US keyboard layout.
+
 ## Not yet (ROADMAP M6g / M11b)
-- A blind-typing bootstrap over the HID keyboard for servers that were never set up.
 - SSH over the USB network while the server's own network is down; remote access over Wi-Fi (M11b).
 - BIOS/GRUB need a keyboard only: there's no OS there to run a login on the serial port.
