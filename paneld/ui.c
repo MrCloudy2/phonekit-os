@@ -9,7 +9,7 @@
 static struct fb *fb;
 static int page = UI_PAGE_TEST;
 static long toast_until;
-static const char *const page_name[UI_PAGES] = {"TEST", "STATUS", "PANEL"};
+static const char *const page_name[UI_PAGES] = {"TEST", "STATUS", "PHONEBOX"};
 
 void ui_init(struct fb *f) { fb = f; }
 int ui_page(void) { return page; }
@@ -20,7 +20,7 @@ static void draw_status_page(void) {
     if (!drawn_bg) { fb_fill(fb, 0, 0, fb->w, fb->h, bg); drawn_bg = 1; }
     char l[64];
     int y = 140;
-    fb_text(fb, 60, y, 9, "PHONEPANEL", fg, bg); y += 140;
+    fb_text(fb, 60, y, 9, "PHONEKIT", fg, bg); y += 140;
     snprintf(l, sizeof l, "USB %c %-14.14s", gadget_mode() ? gadget_mode() : '-', gadget_state());
     fb_text(fb, 60, y, 6, l, fg, bg); y += 90;
     snprintf(l, sizeof l, "%-20s", gadget_mode() == 'B' ? "IP 10.42.0.2" : "HID TOUCHSCREEN");
@@ -86,5 +86,6 @@ void ui_tick(void) {
     if (!fb || !fb->mem) return;
     if (toast_until && now_ms() >= toast_until) { toast_until = 0; draw_page(); }
     if (page == UI_PAGE_STATUS) draw_status_page();
+    pb_tick();
     if (page == UI_PAGE_PANEL) panel_tick();
 }

@@ -225,7 +225,7 @@ int gadget_hid_report(uint8_t *buf, const int *ids, const int *xs, const int *ys
 
 /* ---------------------------------------------------------------- NCM network */
 
-static void run_quiet(char *const argv[]) {
+void run_quiet(char *const argv[]) {
     pid_t p = fork();
     if (p == 0) {
         int nul = open("/dev/null", O_RDWR);
@@ -336,6 +336,7 @@ int gadget_setup(char ttys[GADGET_PORTS][64], struct fb *f) {
     setup_hid();
     setup_ncm();
     if (f && gud_init(f, G) < 0) logmsg("usb: GUD display unavailable");
+    if (adbd_init(G) < 0) logmsg("usb: adb unavailable");
 
     const char *m = store_get("usb_mode", "B");
     if (gadget_set_mode(m[0]) < 0 && wr("UDC", udc) < 0) return -1;
@@ -368,15 +369,20 @@ int gadget_set_mode(char m) {
     if (kbd_fn) unlink_function(kbd_fn);
     if (ncm_fn) unlink_function(ncm_fn);
     unlink_function("ffs.gud");
+    unlink_function("ffs.adb");
     /* the host's gud driver binds to vendor interfaces on 1d50:614d (the GUD USB ID) */
-    wr("idVendor", m == 'A' && gud_ready() ? "0x1d50" : "0x1d6b");
-    wr("idProduct", m == 'A' && gud_ready() ? "0x614d" : "0x0104");
+    /* Mode B (PHONEBOX) carries adb: present the generic "rndis,adb" Android ID (as postmarketOS/PinePhone do)
+     * so stock udev rules give the user's adb access without extra setup. */
+    int with_adb = m == 'B' && adbd_ready();
+    wr("idVendor", m == 'A' && gud_ready() ? "0x1d50" : with_adb ? "0x18d1" : "0x1d6b");
+    wr("idProduct", m == 'A' && gud_ready() ? "0x614d" : with_adb ? "0x4ee4" : "0x0104");
     if (dhcpd_pid > 0) { kill(dhcpd_pid, SIGTERM); dhcpd_pid = -1; }
     if (m == 'A' && hid_fn) link_function(hid_fn);
     if (m == 'A' && mouse_fn) link_function(mouse_fn);
     if (m == 'A' && kbd_fn) link_function(kbd_fn);
     if (m == 'A' && gud_ready()) link_function("ffs.gud");
     if (m == 'B' && ncm_fn) link_function(ncm_fn);
+    if (with_adb) link_function("ffs.adb");
     if (wr("UDC", udc) < 0) return -1;
     mode = m;
     if (m == 'B' && ncm_fn) { if (net_heals >= 3) net_heals = 0; ncm_net_up(); }

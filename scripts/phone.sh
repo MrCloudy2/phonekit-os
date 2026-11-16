@@ -14,10 +14,17 @@ die() { echo "phone: $*" >&2; exit 1; }
 log() { echo "phone: $*" >&2; }
 PART_DEFAULT=recovery
 
+# PhoneKit's own adbd (PHONEBOX mode) also shows up as an adb "device": tell it apart and send it to the ROM.
+is_phonekit() {
+    [[ $(adb shell getprop ro.phonekit 2>/dev/null | tr -d '\r') == 1 ]] || return 1
+    if [[ -z ${PK_REBOOTED:-} ]]; then log "PhoneKit is running: rebooting it into the ROM"; adb reboot >/dev/null 2>&1 || true; PK_REBOOTED=1; fi
+    return 0
+}
+
 wait_rom() {
     local t=${1:-240} i=0
     log "waiting for the ROM (adb)…"
-    until [[ $(adb get-state 2>/dev/null) == device ]] &&
+    until [[ $(adb get-state 2>/dev/null) == device ]] && ! is_phonekit &&
           [[ $(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r') == 1 ]]; do
         sleep 2; (( (i += 2) < t )) || die "ROM didn't come up within ${t}s"
     done

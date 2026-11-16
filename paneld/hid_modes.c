@@ -267,7 +267,7 @@ static void keyboard_frame(const int *ids, const int *xs, const int *ys, int n) 
 /* ---------------------------------------------------------------- menu */
 
 /* top-level phone modes, in the order XCover-short cycles through them */
-static const char *const menu_items[] = {"PANEL", "SCREEN", "MOUSE", "KEYBOARD", "COMBO", "WEBCAM (LATER)", "SETTINGS", "CLOSE"};
+static const char *const menu_items[] = {"PHONEBOX", "SCREEN", "MOUSE", "KEYBOARD", "COMBO", "WEBCAM (LATER)", "SETTINGS", "CLOSE"};
 #define MENU_N 8
 enum { MI_PANEL, MI_SCREEN, MI_MOUSE, MI_KEYBOARD, MI_COMBO, MI_WEBCAM, MI_SETTINGS, MI_CLOSE };
 
@@ -346,7 +346,7 @@ static void draw_menu(void) {
     fb_fill(fb, 0, 0, fb->w, fb->h, bg);
     fb_text(fb, 60, 120, 8, "MODE", fg, bg);
     char cur[48];
-    snprintf(cur, sizeof cur, "NOW: %s   (USB %c)", gadget_mode() == 'A' ? mode_name[input_mode] : "PANEL", gadget_mode());
+    snprintf(cur, sizeof cur, "NOW: %s   (USB %c)", gadget_mode() == 'A' ? mode_name[input_mode] : "PHONEBOX", gadget_mode());
     fb_text(fb, 60, 220, 3, cur, fb_color(fb, 120, 130, 155), bg);
     for (int i = 0; i < MENU_N; i++) {
         int y = MENU_Y0 + i * MENU_ITEM_H;
@@ -373,9 +373,9 @@ static void menu_choose(int i) {
         ui_toast(mode_name[input_mode]);
     } else if (i == MI_PANEL) {
         if (gadget_mode() != 'B') { store_set("usb_mode", "B"); gadget_set_mode('B'); }
-        logmsg("mode: PANEL");
+        logmsg("mode: PHONEBOX");
         ui_page_set(UI_PAGE_PANEL);
-        ui_toast("PANEL");
+        ui_toast("PHONEBOX");
     } else if (i == MI_WEBCAM) {
         ui_toast("WEBCAM: NOT YET");
     } else if (i == MI_SETTINGS) {
@@ -527,3 +527,12 @@ int hm_status(char *b, size_t len) {
 
 /* m = input mode (IN_TOUCHSCREEN..IN_COMBO), not a menu index (MI_PANEL is 0 there) */
 void hm_set_mode(int m) { if (m >= 0 && m < IN_MODES) menu_choose(MI_SCREEN + m); }
+
+/* The phonebox agent ran "am start" on us: show the PHONEBOX page (only if we're in that mode). */
+void hm_show_phonebox(void) {
+    if (gadget_mode() != 'B') return;
+    menu_open = 0;
+    settings_open = 0;
+    ui_page_set(UI_PAGE_PANEL);
+    redraw();
+}

@@ -46,7 +46,7 @@ One image, switchable at runtime with the phone's side buttons (or from the host
 
 | Mode | What the phone is | Host needs |
 |---|---|---|
-| **PANEL** | A smart display: the host sends widgets (gauges, graphs, buttons, toggles, sliders, clocks), the phone draws them and sends back touches. Battery-optimized: it draws only what changes and sleeps between updates | Any program that speaks [PPJ/1](protocol/PPJ1.md) (JSON lines over TCP) |
+| **PHONEBOX** | A desk dashboard driven by the stock [phonebox](https://github.com/ersinkoc/phonebox) desktop agent: its pages, live PC stats, media and shortcut buttons, drawn natively on the phone (no Android, no WebView). Custom hosts (scripts, microcontrollers) can drive the same screen with [PPJ/1](protocol/PPJ1.md). Battery-optimized: it draws only what changes | The phonebox agent (Windows/Linux/macOS), or anything that speaks PPJ/1 (JSON lines over TCP) |
 | **SCREEN** | A USB monitor + touchscreen (GUD display + HID digitizer), ~50 fps at 1080×2340 | Linux with the `gud` module. No driver install |
 | **MOUSE** | A trackpad | Nothing (standard HID) |
 | **KEYBOARD** | A keyboard | Nothing (standard HID) |
@@ -57,8 +57,11 @@ One image, switchable at runtime with the phone's side buttons (or from the host
 Plus: rotation (auto via the phone's sensor hub, or manual) in every mode, an on-device Settings screen, a
 charge limiter and thermal guard, a watchdog, and a debug serial console over USB.
 
-**Compatibility with phonebox desktop** is on the roadmap ([M12b](ROADMAP.md)): a bridge that reads phonebox's
-dashboard config and live data and renders it natively in PANEL mode.
+**Works with phonebox desktop.** Install the [phonebox agent](https://github.com/ersinkoc/phonebox) on your PC as
+usual and plug the phone in, in PHONEBOX mode. The agent finds it over adb by itself, exactly as it finds a phone running
+the phonebox app: PhoneKit answers adb, accepts the agent's USB tunnel and renders its pages natively. You don't need
+the Android app, and you don't need any PhoneKit software on the PC. Widget coverage grows over time; see
+[docs/verification/M12b.md](docs/verification/M12b.md) for the current table.
 
 ## Status
 

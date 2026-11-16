@@ -174,6 +174,8 @@ int json_get(const char *s, const jtok *t, int n, int obj, const char *key);
 int json_str(const char *s, const jtok *t, int i, char *out, size_t len);
 double json_num(const char *s, const jtok *t, int i, double dflt);
 
+void hm_show_phonebox(void);       /* switch to the PHONEBOX page (phonebox agent "am start") */
+
 /* panel.c — PPJ/1 widget engine (PANEL mode) */
 void panel_init(struct fb *f);
 int panel_handle(const char *line, int len, char *reply, size_t rlen); /* reply: JSON line or "" */
@@ -183,6 +185,7 @@ int panel_touch(const int *ids, const int *xs, const int *ys, int n); /* 1 = con
 int panel_page_step(int d);           /* 0 = moved within panel pages, 1 = wrapped out */
 void panel_tick(void);                /* once per second: clocks */
 void panel_set_event_sink(void (*fn)(const char *json));
+int panel_landscape(void);
 int net_init(void);                    /* TCP server for PPJ/1 */
 int net_fd(int which);                 /* 0 listen, 1 client */
 void net_handle(int which);
@@ -194,7 +197,24 @@ enum { GADGET_LOG, GADGET_CTL, GADGET_SH, GADGET_PORTS };
 int gadget_setup(char ttys[GADGET_PORTS][64], struct fb *f);
 int gadget_set_mode(char m);         /* 'A' display (HID touch [+GUD]), 'B' smart (NCM) */
 char gadget_mode(void);
-void gadget_tick(void);              /* mode B self-heal (once a second) */
+void gadget_tick(void);
+void run_quiet(char *const argv[]);  /* fork+exec, output to /dev/null, wait */
+
+/* adbd.c — minimal adb device (PHONEBOX mode: the phonebox agent drives us over adb) */
+int adbd_init(const char *configfs_gadget);
+int adbd_ready(void);
+int adbd_notify_fd(void);
+int adbd_notify_read(void);
+int adbd_stats(char *b, size_t len);
+int adbd_reverse_active(int port);
+
+/* pbclient.c — PHONEBOX mode: native client of the phonebox desktop agent (through adb reverse) */
+void pb_init(void);
+int pb_fd(void);
+void pb_handle(void);
+void pb_tick(void);
+int pb_event(const char *id);
+int pb_stats(char *b, size_t len);              /* mode B self-heal (once a second) */
 const char *gadget_state(void);      /* UDC state, "configured" when a host is attached */
 int gadget_reconnect(int off_ms);    /* soft disconnect/connect */
 int gadget_hid_report(uint8_t *buf, const int *ids, const int *xs, const int *ys, const int *down, int n);

@@ -156,7 +156,7 @@ void panel_draw(void) {
     fb_fill(fb, 0, 0, fb->w, fb->h, bg);
     struct page *p = &pages[cur];
     char t[48];
-    snprintf(t, sizeof t, "%s", p->title[0] ? p->title : "PANEL");
+    snprintf(t, sizeof t, "%s", p->title[0] ? p->title : "PHONEBOX");
     fb_text(fb, 24, 24, 6, t, C(200, 205, 220), bg);
     int np = 0;
     for (int i = 0; i < PAGES; i++) if (pages[i].n) np++;
@@ -307,7 +307,10 @@ int panel_handle(const char *s, int len, char *r, size_t rn) {
 
 /* ---------------------------------------------------------------- touch */
 
+int panel_landscape(void) { return fb && fb->w > fb->h; }
+
 static void send_event(const struct widget *w, const char *type, int with_value) {
+    if (!strncmp(w->id, "pb.", 3)) { if (!strcmp(type, "press")) pb_event(w->id); return; } /* PHONEBOX widgets */
     if (!event_sink) return;
     char b[160];
     if (with_value) snprintf(b, sizeof b, "{\"op\":\"event\",\"id\":\"%s\",\"type\":\"%s\",\"value\":%g}", w->id, type, w->value);

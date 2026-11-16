@@ -180,7 +180,7 @@ void draw_test_pattern(struct fb *f) {
     fb_fill(f, 0, f->h - 1, f->w, 1, edge);
     fb_fill(f, 0, 0, 1, f->h, edge);
     fb_fill(f, f->w - 1, 0, 1, f->h, edge);
-    fb_text(f, 40, f->h - 80, 5, "PHONEPANEL " PP_VERSION, fb_color(f, 120, 120, 140), bg);
+    fb_text(f, 40, f->h - 80, 5, "PHONEKIT " PP_VERSION, fb_color(f, 120, 120, 140), bg);
     fb_present(f);
 }
 

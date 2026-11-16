@@ -98,6 +98,7 @@ int main(void) {
         log_port_open(ttys[GADGET_LOG]);
         ctl_open(ttys[GADGET_CTL]);
         shell_start(ttys[GADGET_SH]);
+        pb_init();
     } else if (getenv("PANELD_CTL")) ctl_open(getenv("PANELD_CTL")); /* testing: a pty */
 
     if (!a.have_fb && hw && ctl_fd() < 0) {
@@ -130,6 +131,10 @@ int main(void) {
         int net_idx[2] = {-1, -1};
         for (int k = 0; k < 2; k++)
             if (net_fd(k) >= 0) { net_idx[k] = n; pfd[n++] = (struct pollfd){.fd = net_fd(k), .events = POLLIN}; }
+        int pb_idx = -1;
+        if (pb_fd() >= 0) { pb_idx = n; pfd[n++] = (struct pollfd){.fd = pb_fd(), .events = POLLIN}; }
+        int adb_idx = -1;
+        if (adbd_notify_fd() >= 0) { adb_idx = n; pfd[n++] = (struct pollfd){.fd = adbd_notify_fd(), .events = POLLIN}; }
         int sen_idx[2] = {-1, -1};
         for (int k = 0; k < 2; k++)
             if (sensors_fd(k) >= 0) { sen_idx[k] = n; pfd[n++] = (struct pollfd){.fd = sensors_fd(k), .events = POLLIN}; }
@@ -201,6 +206,16 @@ int main(void) {
             if (sen_idx[k] >= 0 && (pfd[sen_idx[k]].revents & POLLIN)) sensors_read(k);
         for (int k = 0; k < 2; k++)
             if (net_idx[k] >= 0 && pfd[net_idx[k]].revents) { wd_beat("net"); net_handle(k); }
+        if (pb_idx >= 0 && (pfd[pb_idx].revents & POLLIN)) { wd_beat("phonebox"); pb_handle(); }
+        if (adb_idx >= 0 && (pfd[adb_idx].revents & POLLIN)) {
+            /* the phonebox agent's adb commands: input keyevent WAKEUP/SLEEP/POWER, am start (open the panel) */
+            for (int c; (c = adbd_notify_read());) {
+                if (c == 'w') power_wake("host (adb)");
+                else if (c == 's') power_off("host (adb)");
+                else if (c == 'p') power_toggle();
+                else if (c == 'o' && hw && a.have_fb) { power_wake("host opened the panel"); hm_show_phonebox(); }
+            }
+        }
         if (log_idx >= 0 && pfd[log_idx].revents) {
             /* a hung-up tty reports POLLIN|POLLHUP and reads EOF: reopen for a fresh one */
             if (pfd[log_idx].revents & (POLLHUP | POLLERR | POLLNVAL)) { log_port_reopen(); log_quiet_until = now_ms() + 300; }

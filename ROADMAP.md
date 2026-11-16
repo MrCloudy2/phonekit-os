@@ -450,17 +450,25 @@ by Wi-Fi, and bridges them: a pocket serial-console server / PiKVM-lite.
 - [ ] A webhook `curl` updates a widget value.
 - [ ] Agent restart or phone replug: everything recovers without user action.
 
-#### M12b · phonebox desktop compatibility ⬜
+#### M12b · PHONEBOX mode: phonebox desktop compatibility 🟨
+*Started 2026-11-16 (`docs/verification/M12b.md`). The user's call: PANEL mode becomes PHONEBOX mode, so we don't
+need our own host app.* Approach: **the phone pretends to be a phone with the phonebox app**, so the stock agent
+works unmodified. (A bridge in our own host agent, the first plan, isn't needed.)
 **Deliverables**
-- A bridge in the host agent that speaks the phonebox desktop side: reads phonebox's dashboard config
-  (`config.json` pages/widgets) and its live data stream, maps each widget to a PPJ/1 widget, and sends touches
-  back as phonebox button actions.
-- A table of supported phonebox widget types and what they map to (and what can't be mapped, e.g. WebView-only widgets).
+- ✅ Minimal adbd (`paneld/adbd.c`, FunctionFS): devices/shell/exec, the agent's Android commands emulated
+  (`pm path`, `am start`, `input keyevent`, `settings`, `cmd package`), `adb reverse`, `root`, `reboot`.
+  USB ID 18d1:4ee4 in PHONEBOX mode so stock udev rules give adb access.
+- ✅ Native client (`paneld/pbclient.c`): `/api/config` pages → native widgets, `/api/stream` state → values;
+  taps → the same POSTs the app sends (`/api/run/<id>`, `/api/media/<action>`). Portrait transposes the
+  landscape 12×6 grid; rotation re-flows.
+- ⬜ More widget types (table in the verification doc), page switching from the agent (`goto` events),
+  notifications, approvals, the agent's Wi-Fi pairing route (M11), RSA adb auth (optional).
 
 **Confirm**
-- [ ] An existing phonebox dashboard shows up on PhoneKit without editing it.
-- [ ] Live values update and buttons trigger the same host actions as on phonebox.
-- [ ] `README.md`/`examples/` describe the setup end to end.
+- [x] An existing phonebox dashboard shows up on PhoneKit without editing it (stock agent 0.9.14, default pages).
+- [x] Live values update; buttons send the same requests as the phonebox app (`scripts/test-phonebox.py`).
+- [ ] Every default-template widget type drawn natively.
+- [x] `README.md` describes the setup.
 
 #### M13 · Layout editor ⬜
 **Deliverables**
