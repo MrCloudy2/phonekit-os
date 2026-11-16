@@ -539,7 +539,7 @@ works unmodified. (A bridge in our own host agent, the first plan, isn't needed.
 - [ ] A deliberately broken build (e.g. leaking fds, mishandled replug) is caught by the kit.
 
 #### M16 · Porting skill 🟨
-*2026-11-17: `scripts/probe.sh` drafts a device.yaml from a running phone (PhoneKit or any root recovery shell); PROMPT.md + porting guide exist; Claude skill next.*
+*2026-11-17: `scripts/probe.sh` drafts a device.yaml from a running phone; Claude skill `.claude/skills/port-phone` (opens with the repo in Claude Code), PROMPT.md and the porting guide. Pending: a port by someone else.*
 **Deliverables**
 - A Claude skill (plus a plain-text porting guide) that takes a phone model and:
   checks unlockability and existing kernel trees (LineageOS, TWRP, postmarketOS), drafts

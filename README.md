@@ -85,7 +85,8 @@ Want to add your phone? That's what the [porting guide](docs/porting-guide.md) a
 
 ## Quick start with an AI assistant
 
-1. Clone this repo and open it in your coding assistant (it reads [AGENTS.md](AGENTS.md)).
+1. Clone this repo and open it in your coding assistant (it reads [AGENTS.md](AGENTS.md); in Claude Code the
+   `port-phone` skill in `.claude/skills/` loads automatically).
 2. Paste the contents of [PROMPT.md](PROMPT.md) and tell it your phone model.
 3. Follow along. It checks whether your phone can be done before touching it, makes a known-good backup first,
    and asks before every flash.
