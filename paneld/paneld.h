@@ -240,7 +240,8 @@ void pb_draw(void);
 int pb_touch(const int *ids, const int *xs, const int *ys, int n);
 int pb_page_step(int d);
 int pb_page_set(int n);
-int pb_stats(char *b, size_t len);              /* mode B self-heal (once a second) */
+int pb_stats(char *b, size_t len);
+int pb_hits(char *b, size_t len);              /* mode B self-heal (once a second) */
 const char *gadget_state(void);      /* UDC state, "configured" when a host is attached */
 int gadget_reconnect(int off_ms);    /* soft disconnect/connect */
 int gadget_hid_report(uint8_t *buf, const int *ids, const int *xs, const int *ys, const int *down, int n);

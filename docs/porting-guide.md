@@ -61,7 +61,7 @@ From here you can work without buttons: screenshots (`ppctl.py screenshot out.pn
 If nothing enumerates, check the UDC name: `ls /sys/class/udc` in the shell (or from TWRP).
 
 ## Stage 5: Find the quirks
-Run the test suites one at a time and fix what fails. Record every finding in `device.yaml` → `quirks:`
+Run everything with `scripts/pptest.py` (writes a report for your PR), or the suites one at a time, and fix what fails. Record every finding in `device.yaml` → `quirks:`
 and, if it's SoC-wide, in `socs/<soc>/quirks.md`:
 ```bash
 scripts/test-display.py

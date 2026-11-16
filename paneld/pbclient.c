@@ -1459,6 +1459,14 @@ int pb_page_step(int d) {
     return 0;
 }
 
+/* "x y w h action" per tap target on the current page (logical px), for tests. */
+int pb_hits(char *b, size_t len) {
+    size_t o = 0;
+    for (int i = 0; i < nhits && o + 80 < len; i++)
+        o += (size_t)snprintf(b + o, len - o, "%d %d %d %d %s\n", hits[i].x, hits[i].y, hits[i].w, hits[i].h, hits[i].action);
+    return (int)o;
+}
+
 int pb_stats(char *b, size_t len) {
     return snprintf(b, len, "standby %s%s\nconnected %d\nconfig_version %lld\nconfigs %lu\nstates %lu\nposts %lu\npages %d\npage %d\nweather %d\n"
                     "tz_off %ld\nart %ld\nhits %d\n",

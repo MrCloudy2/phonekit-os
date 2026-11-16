@@ -514,7 +514,8 @@ works unmodified. (A bridge in our own host agent, the first plan, isn't needed.
 - [ ] Records for 2 more devices from different SoC families (e.g. Qualcomm and MediaTek), at least at M2.
 - [ ] A schema validator runs in CI.
 
-#### M15b · pptest: hardware test kit for ports ⬜
+#### M15b · pptest: hardware test kit for ports 🟨
+*2026-11-16: `scripts/pptest.py` runs the suites and writes `docs/verification/<device>-report.md`; stress/soak/fuzz-in-CI next.*
 *Added 2026-11-16.* So self-written (or AI-written) drivers and ports are proven, not assumed.
 **Deliverables**
 - `pptest`: reads a device's claimed capabilities from `device.yaml`, runs the matching suites

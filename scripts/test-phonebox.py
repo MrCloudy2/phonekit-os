@@ -57,8 +57,7 @@ def main():
     time.sleep(3)
     s1 = stats()
     check("live state arriving (~1/s)", int(s1["states"]) >= int(s0["states"]) + 2, f"{s0['states']} → {s1['states']}")
-    info = pp("panel", '{"op":"info"}')
-    pages = int(re.search(r'"pages":(\d+)', info).group(1))
+    pages = int(stats().get("pages", 0))
     check("phonebox pages built", pages >= 1, f"{pages} pages")
     print("== rotation")
     rot0 = re.search(r"rotation (\d+)", pp("info")).group(1)
@@ -66,16 +65,17 @@ def main():
     check("landscape: 12x6 grid", '"cols":12' in pp("panel", '{"op":"info"}'))
     pp("rotate", rot0); time.sleep(1.5)
     print("== taps")
-    p0 = int(stats()["posts"])
-    # PLAY on the default Home page's media widget (x 6..11, y 3 in the phonebox grid); find it via the layout
-    pp("panel", '{"op":"page","n":0}'); time.sleep(0.5)
-    landscape = '"cols":12' in pp("panel", '{"op":"info"}')
-    w, h, top = (2340, 1080, 90) if landscape else (1080, 2340, 90)
-    cols, rows = (12, 6) if landscape else (6, 12)
-    gx, gy = (8, 3) if landscape else (3, 8)  # center column of the 3 media buttons, transposed in portrait
-    lx, ly = int((gx + 0.5) * w / cols), int(top + (gy + 0.5) * (h - top) / rows)
-    pp("touch", "ltap", lx, ly); time.sleep(2)
-    check("media button tap → POST to the agent", int(stats()["posts"]) == p0 + 1)
+    pp("phonebox", "page", 0); time.sleep(1)
+    hits = [l.split(" ", 4) for l in pp("phonebox", "hits").splitlines() if l.strip()]
+    play = next((h for h in hits if h[4] == "/api/media/playpause"), None)
+    check("media play/pause button on the Home page", play is not None, f"{len(hits)} tap targets")
+    if play:
+        p0 = int(stats()["posts"])
+        x, y, w, h = map(int, play[:4])
+        # a tap on PLAY/PAUSE toggles the PC's player: tap twice so the music ends as it was
+        for _ in range(2):
+            pp("touch", "ltap", x + w // 2, y + h // 2); time.sleep(1.5)
+        check("two taps → two POSTs to the agent", int(stats()["posts"]) == p0 + 2)
     print()
     print("FAILED: " + ", ".join(failures) if failures else "ALL PASS")
     return 1 if failures else 0
