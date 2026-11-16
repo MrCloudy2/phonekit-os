@@ -220,7 +220,11 @@ int gadget_setup(char ttys[GADGET_PORTS][64], struct fb *f);
 int gadget_set_mode(char m);         /* 'A' display (HID touch [+GUD]), 'B' smart (NCM) */
 char gadget_mode(void);
 void gadget_tick(void);
-void run_quiet(char *const argv[]);  /* fork+exec, output to /dev/null, wait */
+void run_quiet(char *const argv[]);
+
+/* wifi.c — Wi-Fi client (wpa_supplicant + udhcpc) for the network in the settings store */
+void wifi_tick(void);
+int wifi_ctl(char **argv, int argc, char *out, size_t len); /* -2: "scan" (ctl runs iw) */  /* fork+exec, output to /dev/null, wait */
 
 /* adbd.c — minimal adb device (PHONEBOX mode: the phonebox agent drives us over adb) */
 int adbd_init(const char *configfs_gadget);

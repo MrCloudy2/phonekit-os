@@ -15,5 +15,21 @@ dir   /bin                 0755 0 0
 file  /init                ${PANELD_BIN} 0755 0 0
 file  /etc/phonepanel-version ${VERSION_FILE} 0644 0 0
 
+# Device firmware imported locally (never committed), e.g. Wi-Fi blobs: devices/<dev>/prebuilt/firmware/
+#   wifi/ -> /vendor/etc/wifi (Samsung SCSC), efs/mac.info -> the Wi-Fi MAC the driver reads
+dir   /vendor              0755 0 0
+dir   /vendor/etc          0755 0 0
+dir   /mnt                 0755 0 0
+dir   /mnt/vendor          0755 0 0
+dir   /mnt/vendor/efs      0755 0 0
+dir   /mnt/vendor/efs/wifi 0755 0 0
+? tree  /vendor/etc/wifi     ${FW_DIR}/wifi 0644 0 0
+? file  /mnt/vendor/efs/wifi/.mac.info ${FW_DIR}/efs/mac.info 0644 0 0
+
+# Optional Wi-Fi userspace (scripts/build-wifi-tools.sh): wpa_supplicant/wpa_cli (WPA2-Personal), iw
+? file  /bin/wpa_supplicant  ${WIFI_DIR}/wpa_supplicant 0755 0 0
+? file  /bin/wpa_cli         ${WIFI_DIR}/wpa_cli 0755 0 0
+? file  /bin/iw              ${WIFI_DIR}/iw 0755 0 0
+
 # Optional debug shell: `make BUSYBOX=/path/to/static/aarch64/busybox`
 ? file  /bin/busybox       ${BUSYBOX} 0755 0 0

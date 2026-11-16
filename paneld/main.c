@@ -161,6 +161,7 @@ int main(void) {
         int timeout = touch_pending ? 100 : to_next_s;
         if (hw) {
             gadget_tick();
+            wifi_tick();
             int pt = power_tick(), kt = keys_tick();
             if (kt < pt) pt = kt;
             if (pt < timeout) timeout = pt < 0 ? 0 : pt;

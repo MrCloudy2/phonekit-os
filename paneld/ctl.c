@@ -501,6 +501,17 @@ static void dispatch(struct app *a, char *l, size_t len) {
         ok(NULL);
     } else if (!strcmp(c, "phonebox") && argc > 2 && !strcmp(argv[1], "page")) {
         if (pb_page_set(atoi(argv[2])) < 0) err("no such phonebox page"); else ok(NULL);
+    } else if (!strcmp(c, "wifi")) {
+        char b2[512];
+        int n2 = wifi_ctl(argv, argc, b2, sizeof b2);
+        if (n2 == -2) {
+            char *scan[] = {"/bin/sh", "-c", "ifconfig wlan0 up; iw dev wlan0 scan 2>&1 | grep -E 'SSID:|signal:|^BSS'", NULL};
+            wd_allow("ctl:wifi scan", 30);
+            cmd_run(scan, 25);
+            return;
+        }
+        data(b2, (size_t)n2);
+        ok(NULL);
     } else if (!strcmp(c, "rescue")) {
         /* rescue | rescue type <text…> (raw line after "type ", \r appended) */
         if (argc > 1 && !strcmp(argv[1], "type")) {

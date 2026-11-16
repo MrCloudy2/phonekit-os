@@ -371,7 +371,8 @@ menu on-device, per-page key bindings.
 
 ### Phase 4: Wireless
 
-#### M10 · Wi-Fi bring-up ⬜
+#### M10 · Wi-Fi bring-up 🟨
+*2026-11-16: firmware loads, scan works, join flow wired (`ppctl wifi set`), WPA2 (`docs/verification/M10.md`); real join, mDNS, power, WPA3 pending.*
 **Deliverables**
 - Load WLAN firmware from the vendor partition (mounted read-only) or a bundled blob, per device.
 - wpa_supplicant (or iwd) in the initramfs; on-screen Wi-Fi setup plus provisioning from the host over USB.

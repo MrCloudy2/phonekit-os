@@ -49,8 +49,18 @@ int net_fd(int which) { return which ? cfd : lfd; }
 
 void net_handle(int which) {
     if (which == 0) {
-        int c = accept4(lfd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+        struct sockaddr_in peer;
+        socklen_t pl = sizeof peer;
+        int c = accept4(lfd, (struct sockaddr *)&peer, &pl, SOCK_NONBLOCK | SOCK_CLOEXEC);
         if (c < 0) return;
+        /* Until Wi-Fi pairing exists (M11), only the USB link (10.42.0.0/24) and the phone itself may drive the
+         * panel: on a joined Wi-Fi network anyone could connect otherwise. */
+        uint32_t ip = ntohl(peer.sin_addr.s_addr);
+        if ((ip & 0xffffff00) != 0x0a2a0000 && (ip >> 24) != 127) {
+            logmsg("net: refused %u.%u.%u.%u (not on the USB link)", ip >> 24, ip >> 16 & 255, ip >> 8 & 255, ip & 255);
+            close(c);
+            return;
+        }
         if (cfd >= 0) close(cfd); /* newest client wins */
         cfd = c;
         blen = 0;

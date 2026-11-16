@@ -61,6 +61,31 @@ def main():
                 data = open(src, "rb").read()
                 out += hdr(ino, stat.S_IFREG | mode, uid, gid, 1, len(data), 0, 0, path)
                 out += pad(data)
+            elif kind == "tree":
+                # tree <dest> <srcdir> <filemode> <uid> <gid>: every file under srcdir (sorted, for reproducible
+                # images), directories created 0755; with "?" a missing/unset srcdir is skipped
+                src = f[2] if len(f) == 6 else ""
+                if not src or "$" in src or not os.path.isdir(src if os.path.isabs(src) else os.path.join(base, src)):
+                    if optional:
+                        continue
+                    raise FileNotFoundError(src or "unset tree source")
+                src = src if os.path.isabs(src) else os.path.join(base, src)
+                mode, uid, gid = int(f[3], 8), int(f[4]), int(f[5])
+                made = set()
+                for root, dirs, files in sorted(os.walk(src)):
+                    dirs.sort()
+                    rel = os.path.relpath(root, src)
+                    parts = [] if rel == "." else rel.split(os.sep)
+                    for k in range(len(parts) + 1):
+                        d = "/".join([path] + parts[:k])
+                        if d not in made:
+                            made.add(d); ino += 1
+                            out += hdr(ino, stat.S_IFDIR | 0o755, uid, gid, 2, 0, 0, 0, d)
+                    for name in sorted(files):
+                        data = open(os.path.join(root, name), "rb").read()
+                        ino += 1
+                        out += hdr(ino, stat.S_IFREG | mode, uid, gid, 1, len(data), 0, 0, "/".join([path] + parts + [name]))
+                        out += pad(data)
             elif kind == "nod":
                 mode, uid, gid = int(f[2], 8), int(f[3]), int(f[4])
                 t = stat.S_IFCHR if f[5] == "c" else stat.S_IFBLK

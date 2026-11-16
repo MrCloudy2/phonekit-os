@@ -160,8 +160,11 @@ def wait_port(port_arg, wait):
                 return Ctl(port)
             except TimeoutError:
                 why = f"{port} is there but paneld does not answer"
-            except OSError as e:
+            except (OSError, termios.error, ConnectionError) as e:
+                # the gadget re-binds once at boot (RNDIS heal): the port hangs up under us; try again
                 why = f"{port}: {e}"
+                wait = max(wait, 5)
+                deadline = max(deadline, time.monotonic() + 5)
         if time.monotonic() >= deadline:
             sys.exit(f"ppctl: {why}" + (f" (waited {wait:.0f}s)" if wait else ""))
         time.sleep(0.25)

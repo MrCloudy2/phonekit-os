@@ -44,7 +44,7 @@ $(OUT)/version: FORCE | $(OUT)
 	@cmp -s $@.tmp $@ && rm $@.tmp || mv $@.tmp $@
 
 $(OUT)/ramdisk.cpio.gz: initramfs/initramfs.spec scripts/mkcpio.py $(OUT)/paneld $(OUT)/version | $(OUT)
-	PANELD_BIN=$(abspath $(OUT)/paneld) VERSION_FILE=$(abspath $(OUT)/version) \
+	PANELD_BIN=$(abspath $(OUT)/paneld) VERSION_FILE=$(abspath $(OUT)/version) FW_DIR=$(abspath $(DEVDIR)/prebuilt/firmware) WIFI_DIR=$(CURDIR)/out/wifi \
 	BUSYBOX=$(BUSYBOX) python3 scripts/mkcpio.py $< $(OUT)/ramdisk.cpio
 	gzip -9 -n -f $(OUT)/ramdisk.cpio
 
