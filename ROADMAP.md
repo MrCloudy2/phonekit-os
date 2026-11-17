@@ -264,7 +264,8 @@ menu). PANEL = phonebox-style dashboard on USB B; the others share USB A without
 - [ ] Keyboard types into a host text field; modifiers and shortcuts work.
 - [ ] Menu reachable with side buttons only (no touch needed to switch out of keyboard mode).
 
-#### M6e · Rotation and on-device Settings 🟨
+#### M6e · Rotation and on-device Settings ✅
+*2026-11-17: autorotate default on; SCREEN (GUD) landscape is done by the host rotating its output (KDE: `kscreen-doctor output.USB-1.rotation.left`, verified by the user in M6b); a native GUD rotation stays an option.*
 *2026-11-15: manual rotation for all paneld screens (logical vs panel coordinates in the fb layer), Settings
 screen (rotation, brightness, dim/off, charge window, USB network), all persisted; landscape keyboard verified
 with a HID test. Next: autorotate (sensor hub CHUB needs firmware from the vendor partition + `poweron`),
@@ -286,7 +287,8 @@ SCREEN landscape (2340×1080 GUD mode).*
 - [ ] Autorotate follows the phone within ~1 s and doesn't flap at 45°.
 - [ ] Settings survive reboots; the menu is reachable with side buttons only.
 
-#### M6c · Side buttons and on-device navigation 🟨
+#### M6c · Side buttons and on-device navigation ✅
+*2026-11-17: menu and Settings by buttons, page stepping also drives the phonebox pages (M12b), maintenance actions (M6f).*
 *Started 2026-11-15 (`paneld/keys.c`).* Done: short/long-press actions per key, bound in the settings store,
 default XCover layout, wake-only press when off. Next: page navigation for the M8 widget pages, a settings
 menu on-device, per-page key bindings.
@@ -415,6 +417,7 @@ menu on-device, per-page key bindings.
 - [ ] (Qualcomm device) same over mobile data.
 
 #### M10c · Bluetooth and NFC (optional per device) ⬜
+*2026-11-17: researched, path written down (`docs/research-bluetooth.md`): SCSC exposes raw HCI (`/dev/scsc_h4_0`); needs CONFIG_BT + a vhci bridge.*
 *Added 2026-11-16.* Each porter decides which radios to bring up; status lives in `device.yaml`.
 **Deliverables**
 - Bluetooth via BlueZ where the kernel driver exists (XCover: Samsung SCSC, same chip as Wi-Fi).
