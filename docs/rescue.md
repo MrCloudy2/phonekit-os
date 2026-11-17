@@ -35,6 +35,11 @@ Tap **To: KBD**: the keys now go to the server as a USB keyboard (its own consol
 type `systemctl start serial-getty@ttyACM2` (or whatever tty the phone's interface 04 got), tap **To: TTY** again and
 press Enter: the login prompt appears on the phone. US keyboard layout.
 
+## From another computer (SSH)
+Authorise your public key once: `scripts/ppctl.py ssh authorize "$(cat ~/.ssh/id_ed25519.pub)"`. Then
+`ssh root@<phone> pk-console` puts you on the server's console through the phone (over Wi-Fi, or over the USB
+network the server gets in RESCUE mode). Leave with Enter `~` `.`. Keys only; no passwords.
+
 ## Not yet (ROADMAP M6g / M11b)
-- SSH over the USB network while the server's own network is down; remote access over Wi-Fi (M11b).
+- A test with a real server, and with SSH over Wi-Fi from another computer.
 - BIOS/GRUB need a keyboard only: there's no OS there to run a login on the serial port.

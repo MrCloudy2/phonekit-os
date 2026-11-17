@@ -167,6 +167,8 @@ int main(void) {
         if (hw) {
             gadget_tick();
             wifi_tick();
+            ssh_tick();
+            term_tick();
             int pt = power_tick(), kt = keys_tick();
             if (kt < pt) pt = kt;
             if (pt < timeout) timeout = pt < 0 ? 0 : pt;

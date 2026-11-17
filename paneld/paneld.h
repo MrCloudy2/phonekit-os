@@ -230,6 +230,11 @@ void run_quiet(char *const argv[]);
 
 /* wifi.c — Wi-Fi client (wpa_supplicant + udhcpc) for the network in the settings store */
 void wifi_tick(void);
+
+/* ssh.c — dropbear, key-only, only with authorised keys (M11b) */
+void ssh_tick(void);
+int ssh_ctl(char **argv, int argc, const char *raw, char *out, size_t len);
+void term_tick(void);                  /* term.c: hand the console to/from a remote (ssh) session */
 int wifi_ctl(char **argv, int argc, char *out, size_t len); /* -2: "scan" (ctl runs iw) */  /* fork+exec, output to /dev/null, wait */
 
 /* adbd.c — minimal adb device (PHONEBOX mode: the phonebox agent drives us over adb) */

@@ -3,7 +3,7 @@
 #
 #   scripts/build-wifi-tools.sh        (sources downloaded into third_party/, see below)
 #
-# Output: out/wifi/{wpa_supplicant,wpa_cli,iw,iptables}. wpa_supplicant uses its internal TLS/crypto, so no OpenSSL is
+# Output: out/wifi/{wpa_supplicant,wpa_cli,iw,iptables,dropbearmulti}. wpa_supplicant uses its internal TLS/crypto, so no OpenSSL is
 # needed: WPA2-Personal only for now (WPA3/SAE needs EC crypto, i.e. OpenSSL or wolfSSL; later).
 # Sources (sha256 in third_party/wifi-tools.sha256):
 #   https://github.com/thom311/libnl/releases/download/libnl3_12_0/libnl-3.12.0.tar.gz
@@ -71,6 +71,19 @@ sha256sum -c iptables.sha256
                 --disable-ipv6 --disable-devel --without-kernel >/dev/null
     make -j"$jobs" LDFLAGS="-all-static" >/dev/null && touch .pp-built; }
   cp iptables/xtables-legacy-multi "$out/iptables" )
+
+# dropbear (static, multi-call: dropbear + dropbearkey) for the remote console (M11b), key-only logins
+[[ -f dropbear-2026.94.tar.bz2 ]] || curl -fsSL -o dropbear-2026.94.tar.bz2 https://matt.ucc.asn.au/dropbear/releases/dropbear-2026.94.tar.bz2
+sha256sum -c dropbear.sha256
+[[ -d dropbear-2026.94 ]] || tar xf dropbear-2026.94.tar.bz2
+( cd dropbear-2026.94
+  # key-only by construction: no password authentication compiled in
+  printf '#define DROPBEAR_SVR_PASSWORD_AUTH 0\n#define DROPBEAR_SVR_PAM_AUTH 0\n#define DROPBEAR_X11FWD 0\n' > localoptions.h
+  [[ -f .pp-built ]] || {
+    ./configure --host=$HOST CC="$CC" --disable-zlib --enable-static --disable-lastlog --disable-utmp --disable-utmpx \
+                --disable-wtmp --disable-wtmpx --disable-pututline --disable-pututxline --disable-syslog >/dev/null
+    make -j"$jobs" PROGRAMS="dropbear dropbearkey" MULTI=1 STATIC=1 >/dev/null && touch .pp-built; }
+  cp dropbearmulti "$out/dropbearmulti" )
 
 ${CROSS_STRIP:-aarch64-linux-gnu-strip} "$out"/*
 ls -la "$out"

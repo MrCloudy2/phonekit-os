@@ -45,6 +45,7 @@ static int u8need;
 static struct fb *fb;
 static struct canvas cv;
 static int active;                    /* RESCUE is on screen */
+static int remote;                    /* an ssh pk-console session has the console */
 static int kb_shown = 1;
 static int fsz = 30, cw = 18, ch_ = 36; /* font px, cell w/h */
 static int tx0, ty0, kb_y;            /* terminal origin, keyboard top (logical px) */
@@ -493,6 +494,11 @@ void term_draw(void) {
             fb_blit(fb, &cv, 0, kb_y - 70);
         }
     }
+    if (remote && cv_alloc(&cv, fb->w, 56) == 0) {
+        cv_clear(&cv, 0x7c3aed);
+        cv_text(&cv, F_MEDIUM, 30, 20, 40, "A remote SSH session is using the server console", 0xffffff, 255, 0, fb->w - 40);
+        fb_blit(fb, &cv, 0, 4);
+    }
     if (hid_out && cv_alloc(&cv, fb->w, 56) == 0) {
         cv_clear(&cv, 0x2563eb);
         cv_text(&cv, F_MEDIUM, 30, 20, 40, "Typing on the server's USB keyboard (blind) - tap To: KBD to go back", 0xffffff, 255, 0, fb->w - 40);
@@ -542,6 +548,17 @@ void term_activate(int on, const char *console_tty) {
 }
 
 int term_active(void) { return active; }
+
+/* A remote SSH session (`pk-console`) has the console while /run/rescue.remote exists: step aside, then take it back. */
+void term_tick(void) {
+    if (!active) return;
+    int r = access("/run/rescue.remote", F_OK) == 0;
+    if (r == remote) return;
+    remote = r;
+    if (r) { if (fd >= 0) close(fd); fd = -1; logmsg("rescue: console handed to a remote session"); }
+    else { con_open(); logmsg("rescue: console back from the remote session"); }
+    term_draw();
+}
 
 static int key_at(int x, int y, int *rr, int *cc) {
     for (int r = 0; r < 6; r++)

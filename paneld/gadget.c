@@ -391,11 +391,12 @@ int gadget_set_mode(char m) {
     if (m == 'A' && mouse_fn) link_function(mouse_fn);
     if (m == 'A' && kbd_fn) link_function(kbd_fn);
     if (m == 'A' && gud_ready() && hm_input_mode() != IN_RESCUE) link_function("ffs.gud");
-    if (m == 'B' && ncm_fn) link_function(ncm_fn);
+    int net = ncm_fn && (m == 'B' || hm_input_mode() == IN_RESCUE); /* RESCUE: USB network to the server too */
+    if (net) link_function(ncm_fn);
     if (with_adb) link_function("ffs.adb");
     if (wr("UDC", udc) < 0) return -1;
     mode = m;
-    if (m == 'B' && ncm_fn) { if (net_heals >= 3) net_heals = 0; ncm_net_up(); }
+    if (net) { if (net_heals >= 3) net_heals = 0; ncm_net_up(); }
     if (m == 'A' && hid_fn) {
         char p[32];
         for (int i = 0; i < 20 && access("/dev/hidg0", F_OK) < 0; i++) {

@@ -427,7 +427,8 @@ menu on-device, per-page key bindings.
 - [ ] Pairs with a Linux, Windows and Android host as a keyboard + trackpad; reconnects after reboot.
 - [ ] Idle power with Bluetooth on is measured.
 
-#### M11b · Remote console passthrough ⬜
+#### M11b · Remote console passthrough 🟨
+*2026-11-17: key-only dropbear, `ssh root@<phone> pk-console` reaches the server console; verified over USB (`docs/verification/M11b.md`); Wi-Fi run pending.*
 *Added 2026-11-16. Needs M6g + M11.* The phone sits on a server by USB (keyboard + serial) and on your network
 by Wi-Fi, and bridges them: a pocket serial-console server / PiKVM-lite.
 **Deliverables**
