@@ -235,6 +235,13 @@ void wifi_tick(void);
 void ssh_tick(void);
 void bt_tick(void);                    /* bt.c: SCSC raw HCI <-> vhci bridge when enabled (M10c) */
 int bt_ctl(char **argv, int argc, char *out, size_t len);
+/* bthid.c — the phone as a Bluetooth keyboard + mouse */
+void bthid_set(int on);
+void bthid_pair(void);
+int bthid_connected(void);
+const char *bthid_status(void);
+void bthid_key(int mods, int code);
+void bthid_mouse(int buttons, int dx, int dy, int wheel, int pan);
 int ssh_ctl(char **argv, int argc, const char *raw, char *out, size_t len);
 void term_tick(void);                  /* term.c: hand the console to/from a remote (ssh) session */
 int wifi_ctl(char **argv, int argc, char *out, size_t len); /* -2: "scan" (ctl runs iw) */  /* fork+exec, output to /dev/null, wait */
@@ -285,7 +292,8 @@ void term_draw(void);
 void term_toggle_keyboard(void);
 int term_touch(const int *ids, const int *xs, const int *ys, int n);
 int term_stats(char *b, size_t len);
-void term_type(const char *s);                  /* call often: reaps all children (we are PID 1) */
+void term_type(const char *s);
+void type_hid_text(const char *s);     /* ASCII as keyboard presses (USB HID, and Bluetooth when connected) */                  /* call often: reaps all children (we are PID 1) */
 
 /* ctl.c — control channel on the ACM tty */
 struct app {

@@ -603,6 +603,14 @@ int term_stats(char *b, size_t len) {
                     active, tty, fd, cols, rows, cx, cy, alt, bytes_in, bytes_out, hid_out ? "usb-keyboard" : "serial", hid_keys);
 }
 
+/* Types ASCII text as USB/Bluetooth keyboard presses (ctl "bt type"; tests and DECK macros). */
+void type_hid_text(const char *s) {
+    for (; *s; s++) {
+        int sh = 0, code = ascii_hid((unsigned char)*s, &sh);
+        if (code) hm_key_tap(sh ? 0x02 : 0, code);
+    }
+}
+
 /* Types text into the console (ctl "rescue type"; tests). */
 void term_type(const char *s) { tty_write(s, strlen(s)); }
 

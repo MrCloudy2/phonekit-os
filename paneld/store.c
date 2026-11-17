@@ -169,7 +169,7 @@ int store_dump(char *buf, size_t len) {
     int n = snprintf(buf, len, "# %s slot %d seq %u\n", blkdev[0] ? blkdev : "(none)", cur_slot, cur_seq);
     for (int i = 0; i < nkv && n < (int)len; i++) {
         size_t kl = strlen(kv[i].k);
-        int secret = (kl > 4 && !strcmp(kv[i].k + kl - 4, ".psk")) || (kl > 6 && !strcmp(kv[i].k + kl - 6, ".token")); /* never echo secrets */
+        int secret = (kl > 4 && !strcmp(kv[i].k + kl - 4, ".psk")) || (kl > 6 && !strcmp(kv[i].k + kl - 6, ".token")) || !strcmp(kv[i].k, "bt.keys"); /* never echo secrets (incl. Bluetooth link keys) */
         n += snprintf(buf + n, len - n, "%s=%s\n", kv[i].k, secret && kv[i].v[0] ? "********" : kv[i].v);
     }
     return n < (int)len ? n : (int)len - 1;

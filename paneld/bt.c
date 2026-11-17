@@ -45,8 +45,11 @@ static long h4_len(const unsigned char *b, size_t n) {
     }
 }
 
+static void set_address(void);
+
 static void *bridge(void *v) {
     (void)v;
+    set_address();
     int h4 = open(H4, O_RDWR | O_CLOEXEC);
     if (h4 < 0) { logmsg("bt: %s: %s", H4, strerror(errno)); running = 0; return NULL; }
     int vh = open(VHCI, O_RDWR | O_CLOEXEC);
@@ -93,8 +96,23 @@ static void *bridge(void *v) {
     return NULL;
 }
 
+/* Use the phone's own Bluetooth address (efs), as Android does, instead of the chip-derived default. */
+static void set_address(void) {
+    char a[32] = "";
+    unsigned u[6];
+    if (read_file("/mnt/vendor/efs/bluetooth/bt_addr", a, sizeof a) < 0 ||
+        sscanf(a, "%2x:%2x:%2x:%2x:%2x:%2x", &u[0], &u[1], &u[2], &u[3], &u[4], &u[5]) != 6) return;
+    unsigned long long v = 0;
+    for (int i = 0; i < 6; i++) v = v << 8 | u[i];
+    char s[32];
+    snprintf(s, sizeof s, "%llu", v);
+    int fd = open("/sys/module/scsc_bt/parameters/bluetooth_address", O_WRONLY | O_CLOEXEC);
+    if (fd >= 0) { (void)!write(fd, s, strlen(s)); close(fd); }
+}
+
 void bt_tick(void) {
     want = store_get_int("bt", 0) && access(H4, F_OK) == 0;
+    bthid_set(want);
     if (want && !running) {
         running = 1;
         if (pthread_create(&th, NULL, bridge, NULL)) running = 0;
@@ -173,9 +191,15 @@ int bt_ctl(char **argv, int argc, char *out, size_t len) {
         return snprintf(out, len, "bluetooth %s\n", argv[1]);
     }
     if (argc > 1 && !strcmp(argv[1], "scan")) return bt_scan(out, len);
+    if (argc > 1 && !strcmp(argv[1], "type") && argc > 2) {
+        if (!bthid_connected()) return snprintf(out, len, "error: no Bluetooth host connected\n");
+        for (int i = 2; i < argc; i++) { type_hid_text(argv[i]); if (i + 1 < argc) type_hid_text(" "); }
+        return snprintf(out, len, "typed\n");
+    }
+    if (argc > 1 && !strcmp(argv[1], "pair")) { bthid_pair(); return snprintf(out, len, "discoverable as \"PhoneKit\" for 3 minutes: pair it from the other device\n"); }
     char addr[40] = "";
     read_file("/sys/class/bluetooth/hci0/address", addr, sizeof addr);
-    return snprintf(out, len, "enabled %d\nbridge %s\nhci0 %s\naddress %s\npackets_up %lu\npackets_down %lu\ndropped_while_down %lu\n",
+    return snprintf(out, len, "enabled %d\nbridge %s\nhci0 %s\naddress %s\npackets_up %lu\npackets_down %lu\ndropped_while_down %lu\nhid %s\n",
                     store_get_int("bt", 0), running ? "running" : "stopped",
-                    access("/sys/class/bluetooth/hci0", F_OK) == 0 ? "present" : "absent", addr[0] ? addr : "-", pk_up, pk_down, pk_drop);
+                    access("/sys/class/bluetooth/hci0", F_OK) == 0 ? "present" : "absent", addr[0] ? addr : "-", pk_up, pk_down, pk_drop, bthid_status());
 }

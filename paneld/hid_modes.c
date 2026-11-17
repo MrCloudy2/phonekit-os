@@ -39,6 +39,7 @@ static int mouse_fd = -1, kbd_fd = -1;
 static int buttons; /* bit 0 left, 1 right, 2 middle */
 
 static void mouse_report(int dx, int dy, int wheel, int pan) {
+    if (bthid_connected()) bthid_mouse(buttons, dx, dy, wheel, pan);
     if (hid_open(&mouse_fd, "/dev/hidg1") < 0) return;
     dx = dx > 32767 ? 32767 : dx < -32767 ? -32767 : dx;
     dy = dy > 32767 ? 32767 : dy < -32767 ? -32767 : dy;
@@ -54,6 +55,7 @@ static void click(int bit) { /* press + release */
 }
 
 static void kbd_report(int mods, int code) {
+    if (bthid_connected()) bthid_key(mods, code); /* a Bluetooth host gets it too */
     if (hid_open(&kbd_fd, "/dev/hidg2") < 0) return;
     uint8_t r[8] = {(uint8_t)mods, 0, (uint8_t)code, 0, 0, 0, 0, 0};
     if (write(kbd_fd, r, sizeof r) < 0 && errno != EAGAIN) { close(kbd_fd); kbd_fd = -1; }
