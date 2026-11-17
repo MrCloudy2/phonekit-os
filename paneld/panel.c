@@ -272,7 +272,7 @@ int panel_handle(const char *s, int len, char *r, size_t rn) {
         }
         have_layout = 1;
         cur = pg;
-        if (ui_page() != UI_PAGE_PANEL && hm_owner() == OWN_PAGE) ui_page_set(UI_PAGE_PANEL);
+        if (ui_page() != UI_PAGE_PANEL && ui_page() != UI_PAGE_MODEM && hm_owner() == OWN_PAGE) ui_page_set(UI_PAGE_PANEL);
         else if (visible()) panel_draw();
         return snprintf(r, rn, "{\"op\":\"ok\",\"page\":%d,\"widgets\":%d}", pg, p->n);
     }

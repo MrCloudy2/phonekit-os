@@ -425,6 +425,7 @@ int gadget_set_mode(char m) {
 }
 
 char gadget_mode(void) { return mode; }
+const char *gadget_net_if(void) { return net_if; }
 
 static long net_stat(const char *what) {
     char p[96], b[32];

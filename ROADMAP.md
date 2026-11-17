@@ -416,7 +416,7 @@ menu on-device, per-page key bindings.
 - [ ] Same latency targets as M7 on a local LAN (**< 50 ms**).
 
 #### M10b · Tethering: phone as a USB Wi-Fi / mobile-data adapter 🟨
-*2026-11-17: `ppctl wifi tether on` — NAT + DHCP router offer, phone side verified (`docs/verification/M10b.md`); PC-side browse test pending.*
+*2026-11-17: WI-FI MODEM mode in the menu (status screen, live speed) and `ppctl wifi tether on`; a Linux PC browsed and downloaded through the phone (`docs/verification/M10b.md`, `docs/modem.md`). Windows/macOS and tethering alongside mode A pending.*
 *Added 2026-11-16.*
 **Deliverables**
 - The USB network function (RNDIS/NCM, driverless on Linux/Windows/macOS) routed (NAT) to the phone's Wi-Fi

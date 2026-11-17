@@ -112,6 +112,26 @@ void wifi_tick(void) {
     if (wpa_pid < 0 || dhcp_pid < 0) { stop_all(); start(); }
 }
 
+int wifi_tether_active(void) { return nat_on; }
+
+/* ssid (empty if not set up) and the phone's Wi-Fi IP; returns 1 when it has an address. */
+int wifi_status(char *ssid, size_t sl, char *ip, size_t il) {
+    snprintf(ssid, sl, "%s", store_get("wifi.ssid", ""));
+    if (read_file("/run/wifi.ip", ip, il) < 0) ip[0] = 0;
+    for (char *p = ip; *p; p++) if (*p == '\n') *p = 0;
+    return ssid[0] && ip[0];
+}
+
+/* Tethering on/off; replug = make the PC take the new DHCP offer now (else at its next renewal). */
+void wifi_tether_set(int on, int replug) {
+    if (store_get_int("tether", 0) == on) return;
+    store_set("tether", on ? "1" : "0");
+    next_try = 0;
+    wifi_tick();
+    gadget_dhcp_refresh();
+    if (replug && gadget_mode() == 'B') gadget_reconnect(800);
+}
+
 int wifi_ctl(char **argv, int argc, char *out, size_t len) {
     if (argc > 1 && !strcmp(argv[1], "set") && argc > 2) {
         const char *psk = argc > 3 ? argv[3] : "";

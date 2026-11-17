@@ -488,6 +488,7 @@ static void dispatch(struct app *a, char *l, size_t len) {
         for (int i = 0; argc > 1 && i < IN_MODES; i++) if (!strcmp(argv[1], names[i])) named = i;
         if (named >= 0) hm_set_mode(named);
         else if (argc > 1 && !strcmp(argv[1], "phonebox")) { ok(NULL); tcdrain(fd); usleep(100000); hm_set_phonebox(); return; }
+        else if (argc > 1 && !strcmp(argv[1], "modem")) { ok(NULL); tcdrain(fd); usleep(100000); hm_set_modem(); return; }
         else if (argc > 1 && !strcmp(argv[1], "next")) hm_mode_step(1);
         else if (argc > 1 && !strcmp(argv[1], "menu")) hm_menu_toggle();
         else if (argc > 1) hm_set_mode(atoi(argv[1]));

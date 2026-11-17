@@ -9,7 +9,7 @@
 static struct fb *fb;
 static int page = UI_PAGE_TEST;
 static long toast_until;
-static const char *const page_name[UI_PAGES] = {"TEST", "STATUS", "PHONEBOX"};
+static const char *const page_name[UI_PAGES] = {"TEST", "STATUS", "PHONEBOX", "MODEM"};
 
 void ui_init(struct fb *f) { fb = f; }
 int ui_page(void) { return page; }
@@ -45,6 +45,7 @@ static void draw_status_page(void) {
 
 static void draw_page(void) {
     if (page == UI_PAGE_PANEL) { panel_draw(); return; }
+    if (page == UI_PAGE_MODEM) { modem_draw(fb); return; }
     if (page == UI_PAGE_TEST) draw_test_pattern(fb);
     else {
         uint32_t bg = fb_color(fb, 10, 14, 22);
@@ -63,6 +64,7 @@ void ui_page_set(int p) {
 
 /* Order: PANEL pages (if the host sent a layout) -> STATUS -> TEST -> back to PANEL. */
 void ui_page_step(int d) {
+    if (page == UI_PAGE_MODEM) return; /* the modem screen stays; the mode menu leaves it */
     if (page == UI_PAGE_PANEL && !panel_page_step(d)) return; /* moved within the panel pages */
     static const int order[] = {UI_PAGE_PANEL, UI_PAGE_STATUS, UI_PAGE_TEST};
     int i = 0;
@@ -86,6 +88,13 @@ void ui_tick(void) {
     if (!fb || !fb->mem) return;
     if (toast_until && now_ms() >= toast_until) { toast_until = 0; draw_page(); }
     if (page == UI_PAGE_STATUS) draw_status_page();
+    /* boot with modem mode saved: show its screen instead of the test page */
+    static int boot_done;
+    if (!boot_done && gadget_mode()) {
+        boot_done = 1;
+        if (gadget_mode() == 'B' && store_get_int("tether", 0) && page == UI_PAGE_TEST) ui_page_set(UI_PAGE_MODEM);
+    }
+    if (page == UI_PAGE_MODEM && hm_owner() == OWN_PAGE && !toast_until) modem_tick(fb);
     pb_tick();
     if (page == UI_PAGE_PANEL) panel_tick();
 }

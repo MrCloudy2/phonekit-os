@@ -15,6 +15,8 @@ gadgets. Switch between them with the side button, in about two seconds:
   do media keys, over USB or Bluetooth.
 - **A USB monitor with touch.** It plugs into a Linux PC as a second screen, no driver install.
 - **A keyboard and trackpad** for a TV box, tablet, media PC or another phone, wired or over Bluetooth.
+- **A Wi-Fi modem.** Plug it into a PC with no Wi-Fi (a desktop, a server, a Raspberry Pi) and the PC gets
+  internet through the phone's Wi-Fi, no driver needed.
 - **A server crash cart.** A terminal for a server's serial console, or blind typing into a headless machine.
 - **Whatever you build.** Any script, Home Assistant setup or microcontroller can draw on the screen and read
   touches with [PPJ/1](protocol/PPJ1.md), plain JSON lines over TCP. Or change the C code: it's small, and MIT.
@@ -27,8 +29,8 @@ gadgets. Switch between them with the side button, in about two seconds:
 | **PHONEBOX**: your PC's vitals at a glance | **PHONEBOX**: media controls and the week's weather |
 | ![PHONEBOX AI quotas page: Claude, Codex and Antigravity usage](docs/img/phonebox-ai-quotas.png) | ![KEYBOARD mode: a full keyboard with arrows](docs/img/keyboard.png) |
 | **PHONEBOX**: AI plan usage and reset times | **KEYBOARD**: a USB or Bluetooth keyboard |
-| ![The mode menu: PHONEBOX, SCREEN, MOUSE, KEYBOARD, COMBO, RESCUE, DECK, SETTINGS](docs/img/modes-menu.png) | |
-| **One phone, many modes**: hold the side button | |
+| ![WI-FI MODEM: Wi-Fi to phone to PC, live download and upload speed](docs/img/modem.png) | ![The mode menu: PHONEBOX, SCREEN, MOUSE, KEYBOARD, COMBO, RESCUE, DECK, WI-FI MODEM, SETTINGS](docs/img/modes-menu.png) |
+| **WI-FI MODEM**: the PC goes online through the phone | **One phone, many modes**: hold the side button |
 
 All of these are real screenshots from a Samsung XCover Pro running PhoneKit.
 
@@ -80,6 +82,7 @@ One image, switchable at runtime with the phone's side buttons (or from the host
 | **KEYBOARD** | A keyboard | Nothing (standard HID) |
 | **COMBO** | Keyboard + trackpad | Nothing (standard HID) |
 | **DECK** | A stream-deck style hotkey pad: pages of big buttons sending key combos (F13–F24 by default), media keys, key sequences or text, over USB or Bluetooth ([guide](docs/deck.md)) | Nothing: bind the keys as hotkeys in OBS, Discord, ... |
+| **WI-FI MODEM** | Shares the phone's Wi-Fi with the PC over the USB cable (NAT + DHCP), with a status screen: link, live speed, totals ([guide](docs/modem.md)) | Nothing: the USB network is driverless on Linux and Windows |
 | **RESCUE** | A terminal for a server's serial console, plus blind typing over HID ([guide](docs/rescue.md)) | A serial console on the server |
 | WEBCAM | planned | |
 | FLASH DRIVE | planned: mass storage for a portable debug toolkit | |

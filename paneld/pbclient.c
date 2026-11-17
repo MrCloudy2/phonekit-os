@@ -1717,7 +1717,7 @@ void pb_handle(void) {
         int had = have_cfg;
         load_config(c.data);
         full = 1;
-        if (!had && have_cfg && hm_owner() == OWN_PAGE && ui_page() != UI_PAGE_PANEL && gadget_mode() == 'B') ui_page_set(UI_PAGE_PANEL);
+        if (!had && have_cfg && hm_owner() == OWN_PAGE && ui_page() != UI_PAGE_PANEL && ui_page() != UI_PAGE_MODEM && gadget_mode() == 'B') ui_page_set(UI_PAGE_PANEL);
     }
     if (s.data) {
         load_state(s.data);

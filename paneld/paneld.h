@@ -152,7 +152,7 @@ void key_action(const char *act);
 int keys_dump(char *buf, size_t len);
 
 /* ui.c — built-in pages until the widget engine (M8) */
-enum { UI_PAGE_TEST, UI_PAGE_STATUS, UI_PAGE_PANEL, UI_PAGES };
+enum { UI_PAGE_TEST, UI_PAGE_STATUS, UI_PAGE_PANEL, UI_PAGE_MODEM, UI_PAGES };
 void ui_init(struct fb *f);
 int ui_page(void);
 void ui_page_set(int p);
@@ -284,6 +284,7 @@ int pb_page_step(int d);
 int pb_page_set(int n);
 int pb_stats(char *b, size_t len);
 int pb_hits(char *b, size_t len);              /* mode B self-heal (once a second) */
+const char *gadget_net_if(void);      /* the USB network interface (mode B) */
 const char *gadget_state(void);      /* UDC state, "configured" when a host is attached */
 int gadget_reconnect(int off_ms);    /* soft disconnect/connect */
 int gadget_hid_report(uint8_t *buf, const int *ids, const int *xs, const int *ys, const int *down, int n);
@@ -335,3 +336,12 @@ void wd_start(void);
 void wd_beat(const char *phase);           /* main loop is alive, now doing <phase> */
 void wd_phase(const char *phase);          /* label the current step without counting it as progress */
 void wd_allow(const char *phase, int secs); /* <phase> may legitimately take up to secs */
+
+/* modem.c: the WI-FI MODEM screen (M10b) */
+void modem_draw(struct fb *f);
+void modem_tick(struct fb *f);
+void modem_reset_totals(void);
+int wifi_status(char *ssid, size_t sl, char *ip, size_t il);
+int wifi_tether_active(void);
+void wifi_tether_set(int on, int replug);
+void hm_set_modem(void);
