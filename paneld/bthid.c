@@ -131,7 +131,7 @@ static void build_records(void) {
     attr(&w, 0x0102); de_text(&w, "PhoneKit", 8);
     attr(&w, 0x0201); de_u16(&w, 0x0111);
     attr(&w, 0x0202); de_u8(&w, 0xC0);   /* combo keyboard + pointing */
-    attr(&w, 0x0203); de_u8(&w, 0x00);
+    attr(&w, 0x0203); de_u8(&w, 33);     /* country code: US layout (Android 14+ picks the keyboard layout from it) */
     attr(&w, 0x0204); de_bool(&w, 1);    /* virtual cable */
     attr(&w, 0x0205); de_bool(&w, 1);    /* reconnect initiate */
     attr(&w, 0x0206); a = seq_open(&w); b = seq_open(&w); de_u8(&w, 0x22); de_text(&w, report_desc, sizeof report_desc); seq_close(&w, b); seq_close(&w, a);
