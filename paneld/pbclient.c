@@ -54,6 +54,8 @@ struct route { int wifi; uint32_t ip; int port; char token[96]; unsigned char fp
 static pthread_mutex_t rlock = PTHREAD_MUTEX_INITIALIZER;
 static struct route cur_route;
 static volatile int route_wifi;  /* for stats */
+static volatile int wifi_stream_fd = -1; /* the open Wi-Fi stream's socket, so the main loop can cut it */
+static volatile long stream_opened_ms;
 
 /* X.509 "engine" that trusts exactly one certificate: the leaf whose SHA-256 is the pinned fingerprint. */
 struct pin_ctx {
@@ -119,12 +121,13 @@ static int conn_open(struct conn *c) {
     if (c->fd < 0) return -1;
     struct sockaddr_in sa = {.sin_family = AF_INET, .sin_port = htons((uint16_t)(r.wifi ? r.port : AGENT_PORT)),
                              .sin_addr.s_addr = r.wifi ? htonl(r.ip) : htonl(INADDR_LOOPBACK)};
-    struct timeval tv = {15, 0};
+    struct timeval tv = {15, 0}, quick = {4, 0};
     setsockopt(c->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-    setsockopt(c->fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+    setsockopt(c->fd, SOL_SOCKET, SO_SNDTIMEO, r.wifi ? &quick : &tv, sizeof tv); /* connect() honours SO_SNDTIMEO */
     int one = 1;
     setsockopt(c->fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
     if (connect(c->fd, (struct sockaddr *)&sa, sizeof sa) < 0) { close(c->fd); c->fd = -1; return -1; }
+    setsockopt(c->fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
     if (!r.wifi) return 0;
     c->tls = 1;
     snprintf(c->auth, sizeof c->auth, "Authorization: Bearer %s\r\n", r.token);
@@ -357,12 +360,29 @@ static int pick_route(int attempt) {
         char hs[256];
         snprintf(hs, sizeof hs, "%s", hosts);
         int cnt = 0;
-        char *list[8], *save = NULL;
-        for (char *h = strtok_r(hs, ",", &save); h && cnt < 8; h = strtok_r(NULL, ",", &save)) list[cnt++] = h;
+        uint32_t list[8];
+        /* the PC lists every address it has (LAN, Docker bridges, our own USB link). Skip the USB link (10.42.0.0/24,
+         * never right over Wi-Fi) and put the ones on the phone's Wi-Fi subnet first: a dead address costs a
+         * connect timeout, which made the switch to Wi-Fi take ~40 s */
+        char wip[32] = "";
+        struct in_addr me = {0};
+        if (read_file("/run/wifi.ip", wip, sizeof wip) > 0) { wip[strcspn(wip, "\n")] = 0; inet_aton(wip, &me); }
+        uint32_t mine = ntohl(me.s_addr);
+        char *save = NULL;
+        for (int pass = 0; pass < 2; pass++) {
+            snprintf(hs, sizeof hs, "%s", hosts);
+            save = NULL;
+            for (char *h = strtok_r(hs, ",", &save); h && cnt < 8; h = strtok_r(NULL, ",", &save)) {
+                struct in_addr a;
+                if (!inet_aton(h, &a)) continue;
+                uint32_t ip = ntohl(a.s_addr);
+                if ((ip & 0xffffff00u) == 0x0a2a0000u) continue; /* 10.42.0.x: the USB network */
+                int same = mine && (ip & 0xffffff00u) == (mine & 0xffffff00u);
+                if (same == !pass) list[cnt++] = ip; /* pass 0: same subnet, pass 1: the rest */
+            }
+        }
         if (!cnt) return 0;
-        struct in_addr a;
-        if (!inet_aton(list[attempt % cnt], &a)) return 0;
-        r.ip = ntohl(a.s_addr);
+        r.ip = list[attempt % cnt];
     } else return 0;
     pthread_mutex_lock(&rlock);
     cur_route = r;
@@ -386,9 +406,12 @@ static void *http_thread(void *v) {
         struct conn c;
         if (request(&c, "GET", "/api/stream") != 200) { conn_close(&c); sleep(2); continue; }
         connected = 1;
+        attempt = 0; /* next time, start again with the best address */
         logmsg("phonebox: live stream open over %s (config v%lld)", route_wifi ? "Wi-Fi (TLS, pinned)" : "USB", cfg_version);
         char ev[32] = "message";
         long opened = now_ms();
+        stream_opened_ms = opened;
+        if (route_wifi) wifi_stream_fd = c.fd;
         for (;;) {
             if (route_wifi && adbd_reverse_active(AGENT_PORT) && strcmp(store_get("pb.route", ""), "wifi") && now_ms() - opened > 3000) break; /* cable back: USB wins */
             int n = body_line(&c, line, 256 * 1024);
@@ -411,6 +434,7 @@ static void *http_thread(void *v) {
                 if (ver > 0 && ver != cfg_version) break; /* layout edited on the PC: refetch */
             } else if (!n) snprintf(ev, sizeof ev, "message");
         }
+        wifi_stream_fd = -1;
         conn_close(&c);
         connected = 0;
         logmsg("phonebox: stream closed");
@@ -1744,6 +1768,19 @@ void pb_handle(void) {
 }
 
 /* Once a second (main loop): the clock, media progress, re-flow after rotation, weather every 15 min. */
+void pb_route_tick(void) {
+    /* Main loop, every second even with the screen off. Cable back while streaming over Wi-Fi: USB wins. The
+     * stream loop checks this between events too, but on a slow Wi-Fi link one event (album art) can take
+     * minutes, so cut the socket from here; the loop reconnects over USB. */
+    int fd = wifi_stream_fd;
+    if (fd >= 0 && route_wifi && adbd_reverse_active(AGENT_PORT) && strcmp(store_get("pb.route", ""), "wifi") &&
+        now_ms() - stream_opened_ms > 3000) {
+        logmsg("phonebox: cable back, leaving Wi-Fi for USB");
+        wifi_stream_fd = -1;
+        shutdown(fd, SHUT_RDWR);
+    }
+}
+
 void pb_tick(void) {
     static int last_land = -1;
     static long wx_at;

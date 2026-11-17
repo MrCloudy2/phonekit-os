@@ -345,3 +345,4 @@ int wifi_status(char *ssid, size_t sl, char *ip, size_t il);
 int wifi_tether_active(void);
 void wifi_tether_set(int on, int replug);
 void hm_set_modem(void);
+void pb_route_tick(void);           /* pbclient.c: USB wins over Wi-Fi when the cable is back */

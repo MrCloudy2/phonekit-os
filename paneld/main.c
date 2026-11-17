@@ -167,6 +167,7 @@ int main(void) {
         if (hw) {
             gadget_tick();
             adbd_tick();
+            pb_route_tick();
             wifi_tick();
             ssh_tick();
             bt_tick();
