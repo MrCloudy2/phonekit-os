@@ -293,6 +293,20 @@ SCREEN landscape (2340×1080 GUD mode).*
 default XCover layout, wake-only press when off. Next: page navigation for the M8 widget pages, a settings
 menu on-device, per-page key bindings.
 
+#### M6h · DECK mode: a stream-deck style trigger pad ⬜
+*Added 2026-11-17 at the user's request (after M10c Bluetooth).*
+**Deliverables**
+- A grid of big buttons (labels, colours, optional icons), several pages, configurable on the phone and from the host.
+- Each button sends a **USB HID key combination** (default F13–F24 and Ctrl/Shift/Alt variants, which apps rarely
+  use otherwise). OBS, Discord, Streamlabs, Teams/Zoom (mute), media keys: they bind global hotkeys, so **no host
+  software** is needed. Optional: toggle buttons that remember state, multi-key macros, media/consumer keys.
+- Also over Bluetooth HID (M10c) for a wireless deck.
+- With the phonebox agent: its shortcuts / control-deck page already runs host actions (PHONEBOX mode).
+
+**Confirm**
+- [ ] A button press reaches the PC as the configured combo in < 50 ms; OBS switches a scene on it.
+- [ ] Buttons configurable without editing files; layout survives reboots.
+
 #### M6d · Mass storage: flash drive and portable debug device ⬜
 *Added 2026-11-15 at the user's request.*
 **Deliverables**
