@@ -10,3 +10,5 @@
 
 # per-user device overrides (local paths)
 /devices/*/local.mk
+__pycache__/
+*.pyc
