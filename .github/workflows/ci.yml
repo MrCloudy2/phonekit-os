@@ -24,5 +24,10 @@ jobs:
         run: |
           make out/samsung-xcoverpro/paneld
           make test
+      - name: DECK mode and drawing (ASan + UBSan)
+        run: |
+          gcc -fsanitize=address,undefined -fno-sanitize-recover=all -g -D_GNU_SOURCE -Ipaneld tests/test_deck.c \
+              paneld/deck.c paneld/gfx.c out/samsung-xcoverpro/fonts.c -lm -o test_deck
+          ./test_deck
       - name: Shell scripts parse
         run: for f in scripts/*.sh; do bash -n "$f"; done

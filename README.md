@@ -51,8 +51,13 @@ One image, switchable at runtime with the phone's side buttons (or from the host
 | **MOUSE** | A trackpad | Nothing (standard HID) |
 | **KEYBOARD** | A keyboard | Nothing (standard HID) |
 | **COMBO** | Keyboard + trackpad | Nothing (standard HID) |
+| **DECK** | A stream-deck style hotkey pad: pages of big buttons sending key combos (F13–F24 by default), media keys, key sequences or text, over USB or Bluetooth ([guide](docs/deck.md)) | Nothing: bind the keys as hotkeys in OBS, Discord, ... |
+| **RESCUE** | A terminal for a server's serial console, plus blind typing over HID ([guide](docs/rescue.md)) | A serial console on the server |
 | WEBCAM | planned | |
 | FLASH DRIVE | planned: mass storage for a portable debug toolkit | |
+
+The keyboard, trackpad and DECK modes also work over **Bluetooth** (the phone pairs as a keyboard + mouse with
+phones, tablets, TVs and PCs).
 
 Plus: rotation (auto via the phone's sensor hub, or manual) in every mode, an on-device Settings screen, a
 charge limiter and thermal guard, a watchdog, and a debug serial console over USB.
