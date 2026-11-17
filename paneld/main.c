@@ -168,6 +168,7 @@ int main(void) {
             gadget_tick();
             wifi_tick();
             ssh_tick();
+            bt_tick();
             term_tick();
             int pt = power_tick(), kt = keys_tick();
             if (kt < pt) pt = kt;

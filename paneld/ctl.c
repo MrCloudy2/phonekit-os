@@ -503,6 +503,12 @@ static void dispatch(struct app *a, char *l, size_t len) {
         ok(NULL);
     } else if (!strcmp(c, "phonebox") && argc > 2 && !strcmp(argv[1], "page")) {
         if (pb_page_set(atoi(argv[2])) < 0) err("no such phonebox page"); else ok(NULL);
+    } else if (!strcmp(c, "bt")) {
+        static char b2[2048];
+        if (argc > 1 && !strcmp(argv[1], "scan")) wd_allow("ctl:bt scan", 20);
+        int n2 = bt_ctl(argv, argc, b2, sizeof b2);
+        data(b2, (size_t)n2);
+        ok(NULL);
     } else if (!strcmp(c, "ssh")) {
         char b2[512];
         int n2 = ssh_ctl(argv, argc, l_raw, b2, sizeof b2);

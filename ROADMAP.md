@@ -430,7 +430,8 @@ menu on-device, per-page key bindings.
 - [ ] Tethering runs together with PANEL or COMBO mode.
 - [ ] (Qualcomm device) same over mobile data.
 
-#### M10c · Bluetooth and NFC (optional per device) ⬜
+#### M10c · Bluetooth and NFC (optional per device) 🟨
+*2026-11-17: hci0 via a vhci bridge, discovery works (`docs/verification/M10c.md`); HID device role next.*
 *2026-11-17: researched, path written down (`docs/research-bluetooth.md`): SCSC exposes raw HCI (`/dev/scsc_h4_0`); needs CONFIG_BT + a vhci bridge.*
 *Added 2026-11-16.* Each porter decides which radios to bring up; status lives in `device.yaml`.
 **Deliverables**

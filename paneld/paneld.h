@@ -233,6 +233,8 @@ void wifi_tick(void);
 
 /* ssh.c — dropbear, key-only, only with authorised keys (M11b) */
 void ssh_tick(void);
+void bt_tick(void);                    /* bt.c: SCSC raw HCI <-> vhci bridge when enabled (M10c) */
+int bt_ctl(char **argv, int argc, char *out, size_t len);
 int ssh_ctl(char **argv, int argc, const char *raw, char *out, size_t len);
 void term_tick(void);                  /* term.c: hand the console to/from a remote (ssh) session */
 int wifi_ctl(char **argv, int argc, char *out, size_t len); /* -2: "scan" (ctl runs iw) */  /* fork+exec, output to /dev/null, wait */

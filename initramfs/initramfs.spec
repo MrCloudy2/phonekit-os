@@ -25,6 +25,8 @@ dir   /mnt/vendor/efs      0755 0 0
 dir   /mnt/vendor/efs/wifi 0755 0 0
 ? tree  /vendor/etc/wifi     ${FW_DIR}/wifi 0644 0 0
 ? file  /mnt/vendor/efs/wifi/.mac.info ${FW_DIR}/efs/mac.info 0644 0 0
+dir   /mnt/vendor/efs/bluetooth 0755 0 0
+? file  /mnt/vendor/efs/bluetooth/bt_addr ${FW_DIR}/efs/bt_addr 0644 0 0
 
 # Optional Wi-Fi userspace (scripts/build-wifi-tools.sh): wpa_supplicant/wpa_cli (WPA2-Personal), iw
 ? file  /bin/wpa_supplicant  ${WIFI_DIR}/wpa_supplicant 0755 0 0
