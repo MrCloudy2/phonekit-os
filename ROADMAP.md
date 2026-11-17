@@ -405,7 +405,7 @@ menu on-device, per-page key bindings.
 - [ ] Discoverable from the host via mDNS within 10 s of boot.
 
 #### M11 · Secure pairing and Mode B over Wi-Fi 🟨
-*2026-11-17: PHONEBOX pairs over USB and streams over TLS with the agent's pinned certificate + token (`docs/verification/M11.md`); same-network run pending. PPJ/1 over Wi-Fi still USB-only until it gets pairing too.*
+*2026-11-17: PHONEBOX pairs over USB and streams over TLS with the agent's pinned certificate + token; on a real home network the phone moves to Wi-Fi 1.5 s after the cable is pulled and back to USB 2.6 s after it returns (`docs/verification/M11.md`). QR pairing without a cable and PPJ/1 over Wi-Fi pending.*
 **Deliverables**
 - QR-code pairing shown on the panel; pinned TLS plus a shared key (same model as phonebox).
 - The Mode B protocol over TCP/TLS (and optionally WebSocket for browser clients).
