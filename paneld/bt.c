@@ -5,6 +5,10 @@
 //   ppctl bt on|off      enable/disable (persists)
 //   ppctl bt             status
 //   ppctl bt scan        power hci0 up and run an 8 s inquiry (classic discovery) via a raw HCI socket
+//   ppctl bt pair        discoverable for 3 minutes (pair from the host)
+//   ppctl bt connect     call the bonded host back (also done at start); bt disconnect: virtual cable unplug
+//   ppctl bt type TEXT   type over Bluetooth; bt key CODE [MODS], bt mouse DX DY: single raw reports
+//   ppctl bt log         the last Bluetooth events (pairing, SDP, channels, control messages)
 #include "paneld.h"
 
 #include <errno.h>
@@ -196,9 +200,20 @@ int bt_ctl(char **argv, int argc, char *out, size_t len) {
         for (int i = 2; i < argc; i++) { type_hid_text(argv[i]); if (i + 1 < argc) type_hid_text(" "); }
         return snprintf(out, len, "typed\n");
     }
+    if (argc > 1 && !strcmp(argv[1], "connect")) { bthid_connect(); return snprintf(out, len, "calling the bonded host (see: bt log)\n"); }
+    if (argc > 1 && !strcmp(argv[1], "disconnect")) { bthid_disconnect(); return snprintf(out, len, "disconnecting\n"); }
+    if (argc > 1 && !strcmp(argv[1], "log")) return bthid_log(out, len);
+    if (argc > 1 && (!strcmp(argv[1], "key") || !strcmp(argv[1], "mouse")) && argc > 2) { /* raw reports, for testing */
+        if (!bthid_connected()) return snprintf(out, len, "error: no Bluetooth host connected\n");
+        if (argv[1][0] == 'k') { int m = argc > 3 ? (int)strtol(argv[3], NULL, 0) : 0; bthid_key(m, (int)strtol(argv[2], NULL, 0)); usleep(30000); bthid_key(0, 0); }
+        else bthid_mouse(0, atoi(argv[2]), argc > 3 ? atoi(argv[3]) : 0, 0, 0);
+        return snprintf(out, len, "sent\n");
+    }
     if (argc > 1 && !strcmp(argv[1], "pair")) { bthid_pair(); return snprintf(out, len, "discoverable as \"PhoneKit\" for 3 minutes: pair it from the other device\n"); }
     char addr[40] = "";
-    read_file("/sys/class/bluetooth/hci0/address", addr, sizeof addr);
+    if (read_file("/sys/class/bluetooth/hci0/address", addr, sizeof addr) < 0 || !addr[0])
+        read_file("/mnt/vendor/efs/bluetooth/bt_addr", addr, sizeof addr); /* what set_address() gave the chip */
+    addr[strcspn(addr, "\r\n")] = 0;
     return snprintf(out, len, "enabled %d\nbridge %s\nhci0 %s\naddress %s\npackets_up %lu\npackets_down %lu\ndropped_while_down %lu\nhid %s\n",
                     store_get_int("bt", 0), running ? "running" : "stopped",
                     access("/sys/class/bluetooth/hci0", F_OK) == 0 ? "present" : "absent", addr[0] ? addr : "-", pk_up, pk_down, pk_drop, bthid_status());

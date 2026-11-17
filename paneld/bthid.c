@@ -14,6 +14,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <stdarg.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,6 +38,31 @@ static int intr_fd = -1, ctrl_fd = -1;
 static unsigned char host[6];
 static char status_line[96] = "idle";
 static pthread_mutex_t send_lock = PTHREAD_MUTEX_INITIALIZER;
+static volatile int boot_proto;          /* host chose boot protocol (SET_PROTOCOL 0): mouse reports shrink */
+static volatile int connect_req;         /* `bt connect` / start-up: reconnect to the bonded host ourselves */
+static volatile int pend_ctrl = -1, pend_intr = -1; /* channels opened by the connect helper, adopted by the loop */
+
+/* The last Bluetooth events, for `ppctl bt log` (the kernel log rolls over quickly). */
+#define LOGN 48
+static char ring[LOGN][140];
+static unsigned ring_n;
+static pthread_mutex_t ring_lock = PTHREAD_MUTEX_INITIALIZER;
+static void blog(const char *fmt, ...) {
+    char m[110];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(m, sizeof m, fmt, ap);
+    va_end(ap);
+    logmsg("bthid: %s", m);
+    pthread_mutex_lock(&ring_lock);
+    snprintf(ring[ring_n++ % LOGN], sizeof ring[0], "[%6ld.%03ld] %s", now_ms() / 1000, now_ms() % 1000, m);
+    pthread_mutex_unlock(&ring_lock);
+}
+static void hexs(char *o, size_t ol, const unsigned char *b, size_t n) {
+    size_t k = 0;
+    for (size_t i = 0; i < n && k + 4 < ol; i++) k += (size_t)snprintf(o + k, ol - k, "%02x ", b[i]);
+    if (n && k) o[k - 1] = 0; else o[0] = 0;
+}
 
 /* ---------------------------------------------------------------- HID report descriptor */
 
@@ -59,10 +85,15 @@ static const unsigned char report_desc[] = {
     0xC0, 0xC0,
 };
 
-/* ---------------------------------------------------------------- SDP record */
+/* ---------------------------------------------------------------- SDP records */
+// Two records: HID (0x10000) and Device ID (0x10001, PnP information). Searches return only the records holding
+// every UUID of the pattern, and attribute requests only the attributes asked for (hosts look up the Device ID
+// record separately and must not get HID attributes in its place).
 
-static unsigned char rec[1024];
-static size_t rec_len;
+#define NREC 2
+static unsigned char rec[NREC][512];
+static size_t rec_len[NREC];
+static const unsigned rec_handle[NREC] = {0x00010000, 0x00010001};
 
 struct buf { unsigned char *b; size_t n, cap; };
 static void put8(struct buf *w, unsigned v) { if (w->n < w->cap) w->b[w->n++] = (unsigned char)v; }
@@ -79,10 +110,10 @@ static size_t seq_open(struct buf *w) { put8(w, 0x36); size_t at = w->n; put16(w
 static void seq_close(struct buf *w, size_t at) { size_t l = w->n - at - 2; w->b[at] = (unsigned char)(l >> 8); w->b[at + 1] = (unsigned char)l; }
 static void attr(struct buf *w, unsigned id) { de_u16(w, id); }
 
-static void build_record(void) {
-    struct buf w = {rec, 0, sizeof rec};
+static void build_records(void) {
+    struct buf w = {rec[0], 0, sizeof rec[0]};
     size_t top = seq_open(&w), a, b, c;
-    attr(&w, 0x0000); de_u32(&w, 0x00010000);
+    attr(&w, 0x0000); de_u32(&w, rec_handle[0]);
     attr(&w, 0x0001); a = seq_open(&w); de_uuid(&w, 0x1124); seq_close(&w, a);
     attr(&w, 0x0004); a = seq_open(&w);
         b = seq_open(&w); de_uuid(&w, 0x0100); de_u16(&w, 0x0011); seq_close(&w, b);
@@ -114,47 +145,164 @@ static void build_record(void) {
     attr(&w, 0x020f); de_u16(&w, 0x0640);
     attr(&w, 0x0210); de_u16(&w, 0x0320);
     seq_close(&w, top);
-    rec_len = w.n;
+    rec_len[0] = w.n;
+
+    /* Device ID: Linux Foundation vendor id (USB source), product "PhoneKit HID" */
+    w = (struct buf){rec[1], 0, sizeof rec[1]};
+    top = seq_open(&w);
+    attr(&w, 0x0000); de_u32(&w, rec_handle[1]);
+    attr(&w, 0x0001); a = seq_open(&w); de_uuid(&w, 0x1200); seq_close(&w, a);
+    attr(&w, 0x0005); a = seq_open(&w); de_uuid(&w, 0x1002); seq_close(&w, a);
+    attr(&w, 0x0009); a = seq_open(&w); b = seq_open(&w); de_uuid(&w, 0x1200); de_u16(&w, 0x0103); seq_close(&w, b); seq_close(&w, a);
+    attr(&w, 0x0200); de_u16(&w, 0x0103); /* specification id */
+    attr(&w, 0x0201); de_u16(&w, 0x1d6b); /* vendor id */
+    attr(&w, 0x0202); de_u16(&w, 0x0246); /* product id */
+    attr(&w, 0x0203); de_u16(&w, 0x0100); /* version */
+    attr(&w, 0x0204); de_bool(&w, 1);     /* primary record */
+    attr(&w, 0x0205); de_u16(&w, 0x0002); /* vendor id source: USB-IF */
+    seq_close(&w, top);
+    rec_len[1] = w.n;
 }
 
-/* Answers one SDP request PDU. Every search returns our single record; attribute requests get the whole
- * record (hosts pick what they need). Long answers are split with a 2-byte continuation offset. */
+/* Size of the data element at p (header + data), 0 if malformed or longer than n. */
+static size_t de_size(const unsigned char *p, size_t n) {
+    if (!n) return 0;
+    unsigned t = p[0] >> 3, si = p[0] & 7;
+    size_t h = 1, d;
+    if (si < 5) d = t == 0 ? 0 : (size_t)1 << si;
+    else if (si == 5) { if (n < 2) return 0; d = p[1]; h = 2; }
+    else if (si == 6) { if (n < 3) return 0; d = (size_t)(p[1] << 8 | p[2]); h = 3; }
+    else { if (n < 5) return 0; d = (size_t)p[1] << 24 | (size_t)p[2] << 16 | (size_t)p[3] << 8 | p[4]; h = 5; }
+    return h + d <= n ? h + d : 0;
+}
+static size_t de_hdr(const unsigned char *p) { unsigned si = p[0] & 7; return si == 5 ? 2 : si == 6 ? 3 : si == 7 ? 5 : 1; }
+
+/* 16-bit form of a UUID element (16, 32 or 128 bit on the Bluetooth base), or -1. */
+static long uuid16(const unsigned char *p, size_t sz) {
+    if (p[0] >> 3 != 3) return -1;
+    if (sz == 3) return p[1] << 8 | p[2];
+    if (sz == 5) return p[3] << 8 | p[4];
+    if (sz == 17) return p[3] << 8 | p[4]; /* base 0000xxxx-0000-1000-8000-00805F9B34FB */
+    return -1;
+}
+
+static int has_uuid(const unsigned char *p, size_t n, long u) {
+    while (n) {
+        size_t sz = de_size(p, n);
+        if (!sz) return 0;
+        unsigned t = p[0] >> 3;
+        if (t == 3 && uuid16(p, sz) == u) return 1;
+        if ((t == 6 || t == 7) && has_uuid(p + de_hdr(p), sz - de_hdr(p), u)) return 1;
+        p += sz; n -= sz;
+    }
+    return 0;
+}
+
+/* Does record r hold every UUID in the search pattern (a sequence at p)? */
+static int rec_matches(int r, const unsigned char *pat, size_t psz) {
+    const unsigned char *p = pat + de_hdr(pat);
+    size_t n = psz - de_hdr(pat);
+    int any = 0;
+    while (n) {
+        size_t sz = de_size(p, n);
+        if (!sz) return 0;
+        long u = uuid16(p, sz);
+        if (u < 0 || !has_uuid(rec[r], rec_len[r], u)) return 0;
+        any = 1;
+        p += sz; n -= sz;
+    }
+    return any;
+}
+
+/* Is attribute id in the attribute id list (a sequence of uint16 ids and uint32 hi/lo ranges)? */
+static int attr_wanted(const unsigned char *ids, size_t isz, unsigned id) {
+    const unsigned char *p = ids + de_hdr(ids);
+    size_t n = isz - de_hdr(ids);
+    while (n) {
+        size_t sz = de_size(p, n);
+        if (!sz) return 0;
+        if (p[0] == 0x09 && sz == 3 && (unsigned)(p[1] << 8 | p[2]) == id) return 1;
+        if (p[0] == 0x0A && sz == 5 && id >= (unsigned)(p[1] << 8 | p[2]) && id <= (unsigned)(p[3] << 8 | p[4])) return 1;
+        p += sz; n -= sz;
+    }
+    return 0;
+}
+
+/* Appends record r reduced to the wanted attributes, as one sequence. */
+static void put_attrs(struct buf *w, int r, const unsigned char *ids, size_t isz) {
+    size_t at = seq_open(w);
+    const unsigned char *p = rec[r] + 3;
+    size_t n = rec_len[r] - 3;
+    while (n) {
+        size_t a = de_size(p, n);
+        if (!a || a != 3) break;
+        size_t v = de_size(p + a, n - a);
+        if (!v) break;
+        if (attr_wanted(ids, isz, (unsigned)(p[1] << 8 | p[2])))
+            for (size_t i = 0; i < a + v; i++) put8(w, p[i]);
+        p += a + v; n -= a + v;
+    }
+    seq_close(w, at);
+}
+
+/* Answers one SDP request PDU. Long answers are split with a 2-byte continuation offset into the full answer
+ * (which is rebuilt identically for the follow-up request). */
 static void sdp_handle(int fd, const unsigned char *q, ssize_t n) {
     if (n < 5) return;
     unsigned pdu = q[0], tid = (unsigned)(q[1] << 8 | q[2]);
-    logmsg("bthid: SDP request 0x%02x (%zd bytes)", pdu, n);
-    unsigned char out[1024];
+    const unsigned char *p = q + 5, *end = q + n;
+    unsigned char out[1100];
     struct buf w = {out, 0, sizeof out};
-    if (pdu == 0x02) { /* ServiceSearchRequest -> ServiceSearchResponse */
-        put8(&w, 0x03); put16(&w, tid); put16(&w, 9); put16(&w, 1); put16(&w, 1); put32(&w, 0x00010000); put8(&w, 0);
+    static unsigned char full[1100];
+    struct buf f = {full, 0, sizeof full};
+    const unsigned char *pat = NULL, *ids = NULL;
+    size_t psz = 0, isz = 0;
+    unsigned handle = 0, maxb = 0;
+    if (pdu == 0x02 || pdu == 0x06) { pat = p; psz = de_size(p, (size_t)(end - p)); p += psz; }
+    else if (pdu == 0x04 && p + 4 <= end) { handle = (unsigned)(p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]); p += 4; }
+    if ((pdu != 0x02 && pdu != 0x04 && pdu != 0x06) || (pat && (!psz || pat[0] >> 3 != 6)) || p + 2 > end) {
+        blog("SDP: unsupported/malformed request 0x%02x (%zd bytes)", pdu, n);
+        put8(&w, 0x01); put16(&w, tid); put16(&w, 2); put16(&w, 0x0003); /* invalid request syntax */
         (void)!send(fd, out, w.n, 0);
         return;
     }
-    if (pdu != 0x04 && pdu != 0x06) { /* unsupported: ErrorResponse, invalid request syntax */
+    maxb = (unsigned)(p[0] << 8 | p[1]);
+    p += 2;
+    if (pdu == 0x02) { /* ServiceSearchRequest -> ServiceSearchResponse (handles; never needs continuation) */
+        unsigned hs[NREC], nh = 0;
+        for (int r = 0; r < NREC; r++) if (rec_matches(r, pat, psz) && nh < maxb) hs[nh++] = rec_handle[r];
+        put8(&w, 0x03); put16(&w, tid); put16(&w, 4 + 4 * nh + 1); put16(&w, nh); put16(&w, nh);
+        for (unsigned i = 0; i < nh; i++) put32(&w, hs[i]);
+        put8(&w, 0);
+        (void)!send(fd, out, w.n, 0);
+        blog("SDP search: %u record(s)", nh);
+        return;
+    }
+    if (p < end) { ids = p; isz = de_size(p, (size_t)(end - p)); p += isz; }
+    if (!ids || !isz || ids[0] >> 3 != 6) {
         put8(&w, 0x01); put16(&w, tid); put16(&w, 2); put16(&w, 0x0003);
         (void)!send(fd, out, w.n, 0);
         return;
     }
-    /* find max byte count and the continuation state at the end of the request */
-    const unsigned char *p = q + 5, *end = q + n;
-    if (pdu == 0x04) p += 4;                 /* service record handle */
-    else {                                   /* service search pattern (data element sequence) */
-        if (p >= end) return;
-        size_t l = *p == 0x35 ? (size_t)p[1] + 2 : *p == 0x36 ? (size_t)(p[1] << 8 | p[2]) + 3 : 2;
-        p += l;
-    }
-    if (p + 2 > end) return;
-    unsigned maxb = (unsigned)(p[0] << 8 | p[1]);
-    p += 2;
-    if (p < end) { size_t l = *p == 0x35 ? (size_t)p[1] + 2 : *p == 0x36 ? (size_t)(p[1] << 8 | p[2]) + 3 : 2; p += l; } /* attribute id list */
     unsigned off = 0;
     if (p < end && *p == 2 && p + 3 <= end) off = (unsigned)(p[1] << 8 | p[2]);
-    /* the full answer: our record (ServiceAttribute) or a sequence holding it (ServiceSearchAttribute) */
-    static unsigned char full[1100];
-    size_t fl = 0;
-    if (pdu == 0x06) { full[0] = 0x36; full[1] = (unsigned char)(rec_len >> 8); full[2] = (unsigned char)rec_len; fl = 3; }
-    memcpy(full + fl, rec, rec_len);
-    fl += rec_len;
+    int nrec = 0;
+    if (pdu == 0x04) { /* ServiceAttributeRequest: one record's attributes */
+        int r = -1;
+        for (int i = 0; i < NREC; i++) if (rec_handle[i] == handle) r = i;
+        if (r < 0) {
+            put8(&w, 0x01); put16(&w, tid); put16(&w, 2); put16(&w, 0x0002); /* invalid service record handle */
+            (void)!send(fd, out, w.n, 0);
+            return;
+        }
+        put_attrs(&f, r, ids, isz);
+        nrec = 1;
+    } else { /* ServiceSearchAttributeRequest: a sequence of attribute lists, one per matching record */
+        size_t at = seq_open(&f);
+        for (int r = 0; r < NREC; r++) if (rec_matches(r, pat, psz)) { put_attrs(&f, r, ids, isz); nrec++; }
+        seq_close(&f, at);
+    }
+    size_t fl = f.n;
     if (maxb < 7) maxb = 7;
     if (maxb > 600) maxb = 600;
     if (off > fl) off = (unsigned)fl;
@@ -165,6 +313,7 @@ static void sdp_handle(int fd, const unsigned char *q, ssize_t n) {
     for (size_t i = 0; i < chunk; i++) put8(&w, full[off + i]);
     if (more) { put8(&w, 2); put16(&w, (unsigned)(off + chunk)); } else put8(&w, 0);
     (void)!send(fd, out, w.n, 0);
+    if (!off) blog("SDP %s: %d record(s), %zu bytes", pdu == 0x04 ? "attributes" : "search+attributes", nrec, fl);
 }
 
 /* ---------------------------------------------------------------- mgmt */
@@ -188,7 +337,7 @@ static void load_keys(void) {
     b[0] = 0; b[1] = (unsigned char)n; b[2] = 0;
     for (size_t i = 0; i < n * 25; i++) { unsigned v; sscanf(hex + 2 * i, "%2x", &v); b[3 + i] = (unsigned char)v; }
     mgmt(0x0012, b, (unsigned)(3 + n * 25));
-    if (n) logmsg("bthid: %zu bonded host(s) loaded", n);
+    if (n) blog("%zu bonded host(s) loaded", n);
 }
 
 static void save_key(const unsigned char *k25) {
@@ -213,19 +362,26 @@ static void mgmt_event(void) {
     const unsigned char *p = b + 6;
     if (ev == 0x0001 || ev == 0x0002) { /* command complete / status: log failures */
         unsigned op = n >= 8 ? (unsigned)(p[0] | p[1] << 8) : 0, st = n >= 9 ? p[2] : 0;
-        if (st) logmsg("bthid: mgmt command 0x%04x failed, status 0x%02x", op, st);
-    } else if (ev != 0x0006 && ev != 0x0008) /* skip new-settings / class-changed chatter */
-        logmsg("bthid: mgmt event 0x%04x (%zd bytes)", ev, n - 6);
+        if (st) blog("mgmt command 0x%04x failed, status 0x%02x", op, st);
+    } else if (ev == 0x000B && n >= 6 + 7) {
+        blog("link up with %02X:%02X:%02X:%02X:%02X:%02X", p[5], p[4], p[3], p[2], p[1], p[0]);
+    } else if (ev == 0x000C && n >= 6 + 8) { /* reason: 1 timeout, 2 local, 3 remote, 4 auth failure */
+        static const char *why[] = {"unspecified", "link timeout", "closed here", "closed by the host", "authentication failure", "suspended"};
+        blog("link down with %02X:%02X:%02X:%02X:%02X:%02X (%s)", p[5], p[4], p[3], p[2], p[1], p[0], p[7] < 6 ? why[p[7]] : "?");
+    } else if (ev == 0x0011 && n >= 6 + 8) {
+        blog("authentication failed with %02X:%02X:%02X:%02X:%02X:%02X, status 0x%02x", p[5], p[4], p[3], p[2], p[1], p[0], p[7]);
+    } else if (ev != 0x0006 && ev != 0x0008 && ev != 0x000F && ev != 0x0009) /* skip new-settings / class chatter */
+        blog("mgmt event 0x%04x (%zd bytes)", ev, n - 6);
     if (ev == 0x000F && n >= 6 + 7) { /* User Confirmation Request -> accept ("just works") */
         mgmt(0x001C, p, 7);
-        logmsg("bthid: pairing confirmed for %02X:%02X:%02X:%02X:%02X:%02X", p[5], p[4], p[3], p[2], p[1], p[0]);
+        blog("pairing confirmed for %02X:%02X:%02X:%02X:%02X:%02X", p[5], p[4], p[3], p[2], p[1], p[0]);
     } else if (ev == 0x000E && n >= 6 + 7) { /* PIN Code Request (legacy): 0000 */
         unsigned char r[7 + 1 + 16] = {0};
         memcpy(r, p, 7); r[7] = 4; memcpy(r + 8, "0000", 4);
         mgmt(0x0016, r, sizeof r);
     } else if (ev == 0x0009 && n >= 6 + 26) { /* New Link Key: store_hint + key(25) */
         save_key(p + 1);
-        logmsg("bthid: bonded with %02X:%02X:%02X:%02X:%02X:%02X", p[6], p[5], p[4], p[3], p[2], p[1]);
+        blog("bonded with %02X:%02X:%02X:%02X:%02X:%02X", p[6], p[5], p[4], p[3], p[2], p[1]);
     }
 }
 
@@ -241,14 +397,115 @@ static int l2_listen(unsigned psm) {
     return s;
 }
 
+/* Opens an L2CAP channel to the host (encrypted with the stored link key); -1 after 10 s. */
+static int l2_connect(const unsigned char *addr, unsigned psm) {
+    int s = socket(AF_BT, SOCK_SEQPACKET | SOCK_CLOEXEC, BTPROTO_L2CAP);
+    if (s < 0) return -1;
+    struct bt_security sec = {2, 0}; /* medium: authenticated by the bond, encrypted */
+    setsockopt(s, SOL_BLUETOOTH, BT_SECURITY, &sec, sizeof sec);
+    struct sockaddr_l2 a = {.l2_family = AF_BT, .l2_psm = (unsigned short)psm};
+    memcpy(a.l2_bdaddr, addr, 6);
+    fcntl(s, F_SETFL, O_NONBLOCK);
+    if (connect(s, (struct sockaddr *)&a, sizeof a) < 0 && errno != EINPROGRESS) { close(s); return -1; }
+    struct pollfd p = {.fd = s, .events = POLLOUT};
+    int e = 0;
+    socklen_t el = sizeof e;
+    if (poll(&p, 1, 10000) <= 0 || getsockopt(s, SOL_SOCKET, SO_ERROR, &e, &el) < 0 || e) {
+        if (e) errno = e; else errno = ETIMEDOUT;
+        close(s);
+        return -1;
+    }
+    fcntl(s, F_SETFL, 0);
+    return s;
+}
+
+/* Reconnect helper (HIDReconnectInitiate): control then interrupt channel to the newest bonded host. Runs in its
+ * own thread so pairing prompts keep being answered meanwhile. */
+static void *connect_thread(void *v) {
+    (void)v;
+    const char *hex = store_get("bt.keys", "");
+    size_t n = strlen(hex) / 50;
+    if (!n) { blog("connect: no bonded host (pair first)"); return NULL; }
+    unsigned char a[6];
+    for (int i = 0; i < 6; i++) { unsigned x; sscanf(hex + 50 * (n - 1) + 2 * i, "%2x", &x); a[i] = (unsigned char)x; }
+    blog("connect: calling %02X:%02X:%02X:%02X:%02X:%02X", a[5], a[4], a[3], a[2], a[1], a[0]);
+    int c = -1;
+    for (int t = 0; t < 5 && run; t++) { /* right after power-on the radio isn't ready yet: EHOSTUNREACH */
+        c = l2_connect(a, 17);
+        if (c >= 0 || errno != EHOSTUNREACH) break;
+        sleep(2);
+    }
+    if (c < 0) { blog("connect: control channel: %s (is the host's Bluetooth on and in range?)", strerror(errno)); return NULL; }
+    int i = l2_connect(a, 19);
+    if (i < 0) { blog("connect: interrupt channel: %s", strerror(errno)); close(c); return NULL; }
+    memcpy(host, a, 6);
+    pend_ctrl = c;
+    pend_intr = i;
+    return NULL;
+}
+
+static void set_connected(int c, int i) {
+    if (ctrl_fd >= 0) close(ctrl_fd);
+    ctrl_fd = c;
+    pthread_mutex_lock(&send_lock);
+    if (intr_fd >= 0) close(intr_fd);
+    intr_fd = i;
+    pthread_mutex_unlock(&send_lock);
+    boot_proto = 0;
+    snprintf(status_line, sizeof status_line, "connected to %02X:%02X:%02X:%02X:%02X:%02X",
+             host[5], host[4], host[3], host[2], host[1], host[0]);
+    blog("%s", status_line);
+}
+
+static void set_disconnected(const char *why) {
+    pthread_mutex_lock(&send_lock);
+    if (intr_fd >= 0) close(intr_fd);
+    intr_fd = -1;
+    pthread_mutex_unlock(&send_lock);
+    if (ctrl_fd >= 0) close(ctrl_fd);
+    ctrl_fd = -1;
+    snprintf(status_line, sizeof status_line, "ready, not connected");
+    blog("host disconnected (%s)", why);
+}
+
+/* HID control channel (HIDP): handshake / GET_REPORT / SET_* / protocol / idle / virtual cable unplug. */
+static void control_message(const unsigned char *q, ssize_t n) {
+    char hx[64];
+    hexs(hx, sizeof hx, q, (size_t)(n > 16 ? 16 : n));
+    blog("control: %s", hx);
+    unsigned t = q[0] >> 4, prm = q[0] & 0x0f;
+    unsigned char r[12];
+    switch (t) {
+    case 0x1: /* HID_CONTROL */
+        if (prm == 0x05) set_disconnected("virtual cable unplugged");
+        break;
+    case 0x4: { /* GET_REPORT: type in bits 0-1, report id follows */
+        unsigned type = prm & 3, id = n > 1 ? q[1] : 0;
+        if (type == 1 && id == 1) { memset(r, 0, sizeof r); r[0] = 0xA1; r[1] = 1; (void)!send(ctrl_fd, r, 10, 0); }
+        else if (type == 1 && id == 2) { memset(r, 0, sizeof r); r[0] = 0xA1; r[1] = 2; (void)!send(ctrl_fd, r, boot_proto ? 5 : 9, 0); }
+        else { r[0] = 0x02; (void)!send(ctrl_fd, r, 1, 0); } /* handshake: invalid report id */
+        break;
+    }
+    case 0x5: r[0] = 0x00; (void)!send(ctrl_fd, r, 1, 0); break; /* SET_REPORT (keyboard LEDs): ok */
+    case 0x6: r[0] = 0xA0; r[1] = boot_proto ? 0 : 1; (void)!send(ctrl_fd, r, 2, 0); break; /* GET_PROTOCOL */
+    case 0x7: boot_proto = !(prm & 1); r[0] = 0x00; (void)!send(ctrl_fd, r, 1, 0); /* SET_PROTOCOL */
+        blog("host chose %s protocol", boot_proto ? "boot" : "report");
+        break;
+    case 0x8: r[0] = 0xA0; r[1] = 0; (void)!send(ctrl_fd, r, 2, 0); break; /* GET_IDLE */
+    case 0x9: r[0] = 0x00; (void)!send(ctrl_fd, r, 1, 0); break; /* SET_IDLE */
+    case 0x0: break; /* handshake from the host */
+    default: r[0] = 0x03; (void)!send(ctrl_fd, r, 1, 0); break; /* unsupported request */
+    }
+}
+
 static void *bthid_thread(void *v) {
     (void)v;
     while (run && access("/sys/class/bluetooth/hci0", F_OK) != 0) sleep(1);
     sleep(2); /* let the kernel finish the controller setup */
     mg = socket(AF_BT, SOCK_RAW | SOCK_CLOEXEC, BTPROTO_HCI);
     struct sockaddr_hci ma = {AF_BT, 0xffff, HCI_CHANNEL_CONTROL};
-    if (mg < 0 || bind(mg, (struct sockaddr *)&ma, sizeof ma) < 0) { logmsg("bthid: mgmt: %s", strerror(errno)); run = 0; return NULL; }
-    build_record();
+    if (mg < 0 || bind(mg, (struct sockaddr *)&ma, sizeof ma) < 0) { blog("mgmt: %s", strerror(errno)); run = 0; return NULL; }
+    build_records();
     mgmt_u8(0x0005, 0);              /* powered off while configuring */
     mgmt_u8(0x000B, 1);              /* SSP */
     mgmt_u8(0x0009, 1);              /* bondable */
@@ -262,10 +519,11 @@ static void *bthid_thread(void *v) {
     load_keys();
     mgmt_u8(0x0005, 1);              /* power on */
     int sdp = l2_listen(1), ctl = l2_listen(17), itr = l2_listen(19);
-    if (sdp < 0 || ctl < 0 || itr < 0) logmsg("bthid: L2CAP listen failed (%s)", strerror(errno));
-    logmsg("bthid: ready (SDP, HID control/interrupt listening)");
+    if (sdp < 0 || ctl < 0 || itr < 0) blog("L2CAP listen failed (%s)", strerror(errno));
+    blog("ready (SDP, HID control/interrupt listening)");
     snprintf(status_line, sizeof status_line, "ready, not connected");
-    int sdpc = -1;
+    if (store_get("bt.keys", "")[0]) connect_req = 1; /* bonded: call the host back, as a keyboard does */
+    int sdpc = -1, half_ctrl = -1; /* control channel accepted, interrupt not yet */
     long disc_until = 0;
     while (run) {
         if (discoverable_req) {
@@ -273,10 +531,16 @@ static void *bthid_thread(void *v) {
             unsigned char d[3] = {1, 180, 0}; /* general discoverable for 180 s */
             mgmt(0x0006, d, 3);
             disc_until = now_ms() + 180000;
-            logmsg("bthid: discoverable for 3 minutes");
+            blog("discoverable for 3 minutes");
         }
         if (disc_until && now_ms() > disc_until) disc_until = 0;
-        struct pollfd p[7];
+        if (connect_req && intr_fd < 0) {
+            connect_req = 0;
+            pthread_t t;
+            if (!pthread_create(&t, NULL, connect_thread, NULL)) pthread_detach(t);
+        }
+        if (pend_intr >= 0) { int c = pend_ctrl, i = pend_intr; pend_ctrl = pend_intr = -1; set_connected(c, i); }
+        struct pollfd p[8];
         int np = 0;
         p[np++] = (struct pollfd){.fd = mg, .events = POLLIN};
         p[np++] = (struct pollfd){.fd = sdp, .events = POLLIN};
@@ -285,6 +549,7 @@ static void *bthid_thread(void *v) {
         p[np++] = (struct pollfd){.fd = sdpc, .events = POLLIN};
         p[np++] = (struct pollfd){.fd = ctrl_fd, .events = POLLIN};
         p[np++] = (struct pollfd){.fd = intr_fd, .events = POLLIN};
+        p[np++] = (struct pollfd){.fd = half_ctrl, .events = POLLIN};
         if (poll(p, (nfds_t)np, 500) <= 0) continue;
         if (p[0].revents & POLLIN) mgmt_event();
         if (p[1].revents & POLLIN) { int c = accept4(sdp, NULL, NULL, SOCK_CLOEXEC); if (c >= 0) { if (sdpc >= 0) close(sdpc); sdpc = c; } }
@@ -292,20 +557,14 @@ static void *bthid_thread(void *v) {
         socklen_t rl = sizeof ra;
         if (p[2].revents & POLLIN) {
             int c = accept4(ctl, (struct sockaddr *)&ra, &rl, SOCK_CLOEXEC);
-            if (c >= 0) { if (ctrl_fd >= 0) close(ctrl_fd); ctrl_fd = c; memcpy(host, ra.l2_bdaddr, 6); logmsg("bthid: control channel opened"); }
+            if (c >= 0) { if (half_ctrl >= 0) close(half_ctrl); half_ctrl = c; memcpy(host, ra.l2_bdaddr, 6); blog("host opened the control channel"); }
         }
         rl = sizeof ra;
         if (p[3].revents & POLLIN) {
             int c = accept4(itr, (struct sockaddr *)&ra, &rl, SOCK_CLOEXEC);
             if (c >= 0) {
-                logmsg("bthid: interrupt channel opened");
-                pthread_mutex_lock(&send_lock);
-                if (intr_fd >= 0) close(intr_fd);
-                intr_fd = c;
-                pthread_mutex_unlock(&send_lock);
-                snprintf(status_line, sizeof status_line, "connected to %02X:%02X:%02X:%02X:%02X:%02X",
-                         host[5], host[4], host[3], host[2], host[1], host[0]);
-                logmsg("bthid: %s", status_line);
+                if (half_ctrl >= 0) { set_connected(half_ctrl, c); half_ctrl = -1; }
+                else { blog("interrupt channel without a control channel: refused"); close(c); }
             }
         }
         unsigned char q[700];
@@ -314,33 +573,23 @@ static void *bthid_thread(void *v) {
             if (n <= 0) { close(sdpc); sdpc = -1; } else sdp_handle(sdpc, q, n);
         }
         if (ctrl_fd >= 0 && p[5].revents) {
-            ssize_t n = recv(ctrl_fd, q, sizeof q, 0);
-            if (n <= 0) { close(ctrl_fd); ctrl_fd = -1; }
-            else {
-                unsigned t = q[0] >> 4;
-                logmsg("bthid: control message 0x%02x (%zd bytes)", q[0], n);
-                if (t == 0x1 && (q[0] & 0x0f) == 0x05) { close(ctrl_fd); ctrl_fd = -1; } /* virtual cable unplug */
-                else if (t == 0x4) { unsigned char h = 0x03; (void)!send(ctrl_fd, &h, 1, 0); } /* GET_REPORT: unsupported */
-                else if (t == 0x5 || t == 0x7 || t == 0x9) { unsigned char h = 0x00; (void)!send(ctrl_fd, &h, 1, 0); } /* SET_REPORT/PROTOCOL/IDLE: ok */
-            }
+            ssize_t n = recv(ctrl_fd, q, sizeof q, MSG_DONTWAIT);
+            if (n == 0 || (n < 0 && errno != EAGAIN)) set_disconnected("control channel closed");
+            else if (n > 0) control_message(q, n);
         }
         if (intr_fd >= 0 && p[6].revents) {
-            ssize_t n = recv(intr_fd, q, sizeof q, MSG_DONTWAIT); /* host output reports (keyboard LEDs): ignored */
-            if (n == 0 || (n < 0 && errno != EAGAIN)) {
-                pthread_mutex_lock(&send_lock);
-                close(intr_fd); intr_fd = -1;
-                pthread_mutex_unlock(&send_lock);
-                snprintf(status_line, sizeof status_line, "ready, not connected");
-                logmsg("bthid: host disconnected");
-            }
+            ssize_t n = recv(intr_fd, q, sizeof q, MSG_DONTWAIT); /* host output reports (keyboard LEDs) */
+            if (n == 0 || (n < 0 && errno != EAGAIN)) set_disconnected("interrupt channel closed");
+            else if (n > 0) { char hx[48]; hexs(hx, sizeof hx, q, (size_t)(n > 12 ? 12 : n)); blog("interrupt in: %s", hx); }
+        }
+        if (half_ctrl >= 0 && p[7].revents) { /* control channel messages before the interrupt channel is up */
+            ssize_t n = recv(half_ctrl, q, sizeof q, MSG_DONTWAIT);
+            if (n == 0 || (n < 0 && errno != EAGAIN)) { close(half_ctrl); half_ctrl = -1; }
+            else if (n > 0) { int keep = ctrl_fd; ctrl_fd = half_ctrl; control_message(q, n); ctrl_fd = keep; }
         }
     }
-    pthread_mutex_lock(&send_lock);
-    if (intr_fd >= 0) close(intr_fd);
-    intr_fd = -1;
-    pthread_mutex_unlock(&send_lock);
-    if (ctrl_fd >= 0) close(ctrl_fd);
-    ctrl_fd = -1;
+    if (half_ctrl >= 0) close(half_ctrl);
+    set_disconnected("Bluetooth off");
     close(sdp); close(ctl); close(itr); close(mg);
     mg = -1;
     return NULL;
@@ -354,8 +603,9 @@ static unsigned long sent, send_fail;
 static void send_report(const unsigned char *r, size_t n) {
     pthread_mutex_lock(&send_lock);
     if (intr_fd >= 0) {
-        if (send(intr_fd, r, n, MSG_DONTWAIT) == (ssize_t)n) sent++;
-        else { send_fail++; if (send_fail < 5) logmsg("bthid: send: %s", strerror(errno)); }
+        if (send(intr_fd, r, n, MSG_DONTWAIT) == (ssize_t)n) {
+            if (sent++ < 4) { char hx[40]; hexs(hx, sizeof hx, r, n); blog("report out: %s", hx); }
+        } else { send_fail++; if (send_fail < 5) blog("send: %s", strerror(errno)); }
     }
     pthread_mutex_unlock(&send_lock);
 }
@@ -366,6 +616,15 @@ void bthid_key(int mods, int code) {
 }
 
 void bthid_mouse(int buttons, int dx, int dy, int wheel, int pan) {
+    if (boot_proto) { /* boot mouse: buttons, 8-bit X/Y */
+        dx = dx > 127 ? 127 : dx < -127 ? -127 : dx;
+        dy = dy > 127 ? 127 : dy < -127 ? -127 : dy;
+        unsigned char r[5] = {0xA1, 0x02, (unsigned char)(buttons & 7), (unsigned char)(int8_t)dx, (unsigned char)(int8_t)dy};
+        send_report(r, sizeof r);
+        return;
+    }
+    dx = dx > 32767 ? 32767 : dx < -32767 ? -32767 : dx;
+    dy = dy > 32767 ? 32767 : dy < -32767 ? -32767 : dy;
     unsigned char r[9] = {0xA1, 0x02, (unsigned char)buttons, (unsigned char)dx, (unsigned char)(dx >> 8),
                           (unsigned char)dy, (unsigned char)(dy >> 8), (unsigned char)(int8_t)wheel, (unsigned char)(int8_t)pan};
     send_report(r, sizeof r);
@@ -381,8 +640,24 @@ void bthid_set(int on) {
 }
 
 void bthid_pair(void) { discoverable_req = 1; }
+void bthid_connect(void) { connect_req = 1; }
+void bthid_disconnect(void) {
+    if (ctrl_fd >= 0) { unsigned char u = 0x15; (void)!send(ctrl_fd, &u, 1, 0); } /* virtual cable unplug */
+}
+
+int bthid_log(char *out, size_t len) {
+    size_t o = 0;
+    pthread_mutex_lock(&ring_lock);
+    unsigned first = ring_n > LOGN ? ring_n - LOGN : 0;
+    for (unsigned i = first; i < ring_n && o + 130 < len; i++) o += (size_t)snprintf(out + o, len - o, "%s\n", ring[i % LOGN]);
+    pthread_mutex_unlock(&ring_lock);
+    if (!o) o = (size_t)snprintf(out, len, "(no Bluetooth events yet)\n");
+    return (int)o;
+}
+
 const char *bthid_status(void) {
-    static char b[160];
-    snprintf(b, sizeof b, "%s (reports sent %lu, failed %lu)", run ? status_line : "off", sent, send_fail);
+    static char b[200];
+    snprintf(b, sizeof b, "%s (reports sent %lu, failed %lu%s)", run ? status_line : "off", sent, send_fail,
+             boot_proto ? ", boot protocol" : "");
     return b;
 }

@@ -238,6 +238,9 @@ int bt_ctl(char **argv, int argc, char *out, size_t len);
 /* bthid.c — the phone as a Bluetooth keyboard + mouse */
 void bthid_set(int on);
 void bthid_pair(void);
+void bthid_connect(void);
+void bthid_disconnect(void);
+int bthid_log(char *out, size_t len);
 int bthid_connected(void);
 const char *bthid_status(void);
 void bthid_key(int mods, int code);
