@@ -12,6 +12,9 @@
 //   ppctl deck blank N | deck reset N | deck reset all
 //   ppctl deck page P "NAME"                           page title (P = 1..4)
 //   ppctl deck press N                                 press + release (tests)
+//   ppctl deck style glossy|glass|flat                 button look (default glossy)
+//   ppctl deck hints on|off                            the small key line under each label
+// Labels: "\n" starts a new line ("BE RIGHT\nBACK"), up to 3 lines.
 // Colours: blue red orange amber green teal violet pink gray, or #rrggbb. "toggle" buttons light up on every other
 // press (a reminder of state such as a muted mic; PhoneKit can't see the app's real state).
 #include "paneld.h"
@@ -44,6 +47,9 @@ static const char *const default_page_name[PAGES] = {"STREAM", "MEDIA", "PAGE 3"
 static struct btn B[NBTN];
 static int toggled[NBTN];
 static int loaded, page;
+enum { ST_GLOSSY, ST_GLASS, ST_FLAT };
+static const char *const style_name[] = {"glossy", "glass", "flat"};
+static int style, hints = 1;
 
 /* ---------------------------------------------------------------- config */
 
@@ -76,6 +82,10 @@ static void load_one(int i) {
 
 static void load(void) {
     for (int i = 0; i < NBTN; i++) load_one(i);
+    const char *st = store_get("deck.style", "glossy");
+    style = ST_GLOSSY;
+    for (int k = 0; k < 3; k++) if (!strcmp(st, style_name[k])) style = k;
+    hints = strcmp(store_get("deck.hints", "on"), "off") != 0;
     loaded = 1;
 }
 
@@ -260,14 +270,19 @@ static uint32_t colour_of(const char *c) {
     return 0x94a3b8;
 }
 
-static int cols(void) { return cv.w >= cv.h ? 4 : 3; }
+/* Near-square keys like a Stream Deck: 6 x 2 in landscape, 3 x 4 in portrait. */
+static int cols(void) { return cv.w >= cv.h ? 6 : 3; }
 static int header_h(void) { return P(46); }
 
 static void btn_rect(int slot, int *x, int *y, int *w, int *h) {
     int c = cols(), r = PER / c, pad = P(10), gap = P(8), top = header_h();
-    int bw = (cv.w - 2 * pad - (c - 1) * gap) / c, bh = (cv.h - top - pad - (r - 1) * gap) / r;
-    *x = pad + (slot % c) * (bw + gap);
-    *y = top + (slot / c) * (bh + gap);
+    int aw = cv.w - 2 * pad, ah = cv.h - top - pad;
+    int bw = (aw - (c - 1) * gap) / c, bh = (ah - (r - 1) * gap) / r;
+    if (bh > bw * 23 / 20) bh = bw * 23 / 20; /* at most 15 % taller than wide */
+    if (bw > bh * 23 / 20) bw = bh * 23 / 20;
+    int ox = pad + (aw - (c * bw + (c - 1) * gap)) / 2, oy = top + (ah - (r * bh + (r - 1) * gap)) / 2;
+    *x = ox + (slot % c) * (bw + gap);
+    *y = oy + (slot / c) * (bh + gap);
     *w = bw; *h = bh;
 }
 
@@ -279,34 +294,147 @@ static void hint(const char *a, char *o, size_t ol) {
     for (char *p = o; *p; p++) if (*p >= 'a' && *p <= 'z') *p = (char)(*p - 'a' + 'A');
 }
 
+/* Signed distance to a rounded rectangle (<0 inside). */
+static float sd_rr(float px, float py, float x, float y, float w, float h, float r) {
+    float hx = w * 0.5f, hy = h * 0.5f;
+    float qx = fabsf(px - (x + hx)) - (hx - r), qy = fabsf(py - (y + hy)) - (hy - r);
+    float ox = fmaxf(qx, 0), oy = fmaxf(qy, 0);
+    return sqrtf(ox * ox + oy * oy) + fminf(fmaxf(qx, qy), 0) - r;
+}
+static float clamp01(float v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+
+/* Room around a button for its shadow and glow (half the gap between buttons). */
+static int margin(void) { return style == ST_FLAT ? 2 : P(4); }
+
+/* A glossy (or glass) key in one pass per pixel: drop shadow, glow when lit, metallic rim, colour gradient with a
+ * glow at the bottom, a curved gloss on the top half. Pressed keys sink by 2 dp and lose the shadow. */
+__attribute__((optimize("O2"))) /* the hot loop of a key press; paneld is built -Os */
+static void draw_key(int x, int y, int w, int h, int r, uint32_t c, int pressed, int lit, int dull) {
+    int glass = style == ST_GLASS, M = margin(), dy = pressed ? P(2) : 0;
+    float rim = fmaxf(2.0f, S * 1.6f), by = (float)(y + dy);
+    uint32_t base = glass ? c : rgb_mix(c, 0x000000, 40); /* the palette is light; keys want deeper colour */
+    if (dull) base = rgb_mix(base, 0x262b33, 120);
+    if (pressed) base = rgb_mix(base, 0x000000, 60);
+    uint32_t top = rgb_mix(base, 0xffffff, 40), bot = rgb_mix(base, 0x000000, 150), glow = rgb_mix(base, 0xffffff, 110);
+    uint32_t tint = rgb_mix(0x0b0f15, base, lit || pressed ? 120 : dull ? 30 : 60);
+    float cx = x + w * 0.5f, inv_ex = 1 / (w * 0.55f), inv_gx = 1 / (w * 0.75f);
+    float gloss_max = (glass ? 70 : 125) * (pressed ? 0.45f : 1), g_in = P(2.5f);
+    for (int j = y - M; j < y + h + M; j++) {
+        if (j < 0 || j >= cv.h) continue;
+        /* everything that depends only on the row */
+        float py = j + 0.5f, t = clamp01((py - by) / h);
+        float ey = (py - (by + h)) / (h * 0.5f), ey2 = ey * ey;
+        float gy = (py - (by - h * 0.22f)) / (h * 0.68f), gy2 = gy * gy;
+        float gv = gloss_max * (1 - 0.8f * clamp01((py - by) / (h * 0.46f)));
+        uint32_t rc = glass ? rgb_mix(0xffffff, 0x8b95a5, (int)(200 * t)) : rgb_mix(0xeef1f5, 0x59606c, (int)(255 * t));
+        uint32_t body0 = glass ? rgb_mix(tint, 0x000000, (int)(80 * t))
+                               : t < 0.5f ? rgb_mix(top, base, (int)(510 * t)) : rgb_mix(base, bot, (int)(510 * (t - 0.5f)));
+        int edge_a = t < 0.5f ? (int)(90 * (1 - 2 * t)) : 0;
+        uint32_t *row = cv.px + (size_t)j * cv.w;
+        for (int i = x - M; i < x + w + M; i++) {
+            if (i < 0 || i >= cv.w) continue;
+            float px = i + 0.5f;
+            uint32_t col = BG;
+            float d = sd_rr(px, py, (float)x, by, (float)w, (float)h, (float)r);
+            if (d > -1) { /* outside or on the edge: shadow and glow */
+                if (!pressed) {
+                    float ds = sd_rr(px, py - P(3), (float)x, (float)y, (float)w, (float)h, (float)r);
+                    float sa = clamp01(1 - (ds + P(1)) / P(4));
+                    if (sa > 0) col = rgb_mix(col, 0x000000, (int)(170 * sa));
+                }
+                if (lit && d > 0) { float ga = clamp01(1 - d / M); col = rgb_mix(col, c, (int)(140 * ga * ga)); }
+            }
+            float co = clamp01(0.5f - d);
+            if (co > 0) {
+                col = co >= 1 ? rc : rgb_mix(col, rc, (int)(255 * co));
+                float di = d + rim, ci = clamp01(0.5f - di);
+                if (ci > 0) {
+                    uint32_t body = body0;
+                    float ex = (px - cx) * inv_ex, g = 1 - (ex * ex + ey2);
+                    if (g > 0) body = rgb_mix(body, glass ? base : glow, (int)(g * g * (glass ? 110 : 160)));
+                    col = ci >= 1 ? body : rgb_mix(col, body, (int)(255 * ci));
+                    float gx = (px - cx) * inv_gx, e = gx * gx + gy2;
+                    if (e < 1 && di < -g_in) { /* gloss: bright at the top, fading down to a crisp curved edge */
+                        float ga = gv * clamp01((1 - e) * 30) * clamp01((-di - g_in) / 2);
+                        col = rgb_mix(col, 0xffffff, (int)(ga * ci));
+                    }
+                    if (edge_a && di > -P(1.2f)) col = rgb_mix(col, 0xffffff, (int)(edge_a * ci)); /* inner top edge */
+                }
+            }
+            row[i] = col;
+        }
+    }
+}
+
+/* Label lines: "\n" (backslash n) splits, up to 3. Returns the count. */
+static int label_lines(const char *l, char out[3][24]) {
+    int n = 0;
+    const char *p = l;
+    while (n < 3) {
+        const char *q = strstr(p, "\\n");
+        size_t len = q ? (size_t)(q - p) : strlen(p);
+        if (len > 23) len = 23;
+        memcpy(out[n], p, len); out[n][len] = 0;
+        n++;
+        if (!q) break;
+        p = q + 2;
+    }
+    return n;
+}
+
+static void text_shadowed(int font, int size, int x, int y, const char *s, uint32_t rgb, int a, float ls, int max_w) {
+    if (style != ST_FLAT) cv_text(&cv, font, size, x, y + P(1), s, 0x000000, 110, ls, max_w);
+    cv_text(&cv, font, size, x, y, s, rgb, a, ls, max_w);
+}
+
 static void draw_button(int slot, int pressed) {
-    int i = page * PER + slot, x, y, w, h;
+    int i = page * PER + slot, x, y, w, h, M = margin();
     btn_rect(slot, &x, &y, &w, &h);
-    cv_rect(&cv, x - 2, y - 2, w + 4, h + 4, BG, 255);
+    cv_rect(&cv, x - M, y - M, w + 2 * M, h + 2 * M, BG, 255);
     const struct btn *b = &B[i];
-    int r = P(16);
+    int r = P(style == ST_FLAT ? 16 : 18);
     if (!b->label[0] && !b->action[0]) { cv_rrect_stroke(&cv, x, y, w, h, r, fmaxf(1.5f, S * 0.6f), 0xffffff, 14); return; }
     uint32_t c = colour_of(b->colour);
     int on = b->toggle && toggled[i];
-    uint32_t fill = pressed ? rgb_mix(BG, c, 200) : on ? rgb_mix(BG, c, 150) : rgb_mix(BG, c, 34);
-    cv_rrect(&cv, x, y, w, h, r, fill, 255);
-    cv_rrect_stroke(&cv, x, y, w, h, r, fmaxf(2.0f, S * 0.8f), pressed ? 0xffffff : c, pressed ? 200 : on ? 255 : 110);
-    if (b->toggle) cv_circle(&cv, x + w - P(16), y + P(16), P(5), on ? 0xffffff : c, on ? 255 : 120);
-    /* label: as large as fits */
-    const char *l = b->label[0] ? b->label : b->action;
-    int ls = P(22);
-    while (ls > P(10) && cv_text_w(F_BOLD, ls, l, ls * 0.06f) > w - P(20)) ls--;
-    int tw = cv_text_w(F_BOLD, ls, l, ls * 0.06f);
-    int cy = y + h / 2;
-    uint32_t tc = pressed || on ? 0xffffff : TEXT;
-    cv_text(&cv, F_BOLD, ls, x + (w - tw) / 2, cy + (int)(ls * 0.30f), l, tc, 255, ls * 0.06f, w - P(12));
+    if (style == ST_FLAT) {
+        uint32_t fill = pressed ? rgb_mix(BG, c, 200) : on ? rgb_mix(BG, c, 150) : rgb_mix(BG, c, 34);
+        cv_rrect(&cv, x, y, w, h, r, fill, 255);
+        cv_rrect_stroke(&cv, x, y, w, h, r, fmaxf(2.0f, S * 0.8f), pressed ? 0xffffff : c, pressed ? 200 : on ? 255 : 110);
+    } else {
+        draw_key(x, y, w, h, r, c, pressed, on, b->toggle && !on);
+        if (pressed) y += P(2);
+    }
+    if (b->toggle) { /* status light */
+        float lx = x + w - P(17), ly = y + P(17);
+        if (on && style != ST_FLAT) cv_circle(&cv, lx, ly, P(9), 0xffffff, 60);
+        cv_circle(&cv, lx, ly, P(5), on ? 0xffffff : style == ST_FLAT ? c : 0x11151b, on ? 255 : style == ST_FLAT ? 120 : 160);
+    }
+    /* label: as large as fits, centred, one to three lines */
+    char ln[3][24];
+    int n = label_lines(b->label[0] ? b->label : b->action, ln);
+    int hint_room = hints ? P(18) : 0;
+    int ls = P(n == 1 ? 24 : 20);
+    for (;; ls--) {
+        int fits = ls <= P(10) || ls * 1.18f * n <= h - hint_room - P(16);
+        for (int k = 0; k < n && fits && ls > P(10); k++) fits = cv_text_w(F_BOLD, ls, ln[k], ls * 0.06f) <= w - P(20);
+        if (fits) break;
+    }
+    float lh = ls * 1.18f;
+    float cy = y + (h - hint_room * 0.6f) / 2 - lh * (n - 1) / 2;
+    uint32_t tc = style == ST_FLAT ? (pressed || on ? 0xffffff : TEXT) : 0xffffff;
+    for (int k = 0; k < n; k++) {
+        int tw = cv_text_w(F_BOLD, ls, ln[k], ls * 0.06f);
+        text_shadowed(F_BOLD, ls, x + (w - tw) / 2, (int)(cy + k * lh + ls * 0.36f), ln[k], tc, 255, ls * 0.06f, w - P(12));
+    }
+    if (!hints) return;
     char hs[48];
     hint(b->action, hs, sizeof hs);
     int hsz = P(10);
     int hw = cv_text_w(F_MEDIUM, hsz, hs, hsz * 0.10f);
     if (hw > w - P(16)) hw = w - P(16);
-    cv_text(&cv, F_MEDIUM, hsz, x + (w - hw) / 2, y + h - P(14), hs, pressed || on ? 0xffffff : MUTED, pressed || on ? 210 : 255,
-            hsz * 0.10f, w - P(16));
+    int ha = style == ST_FLAT ? (pressed || on ? 210 : 255) : 200;
+    uint32_t hc = style == ST_FLAT ? (pressed || on ? 0xffffff : MUTED) : 0xffffff;
+    text_shadowed(F_MEDIUM, hsz, x + (w - hw) / 2, y + h - P(14), hs, hc, ha, hsz * 0.10f, w - P(16));
 }
 
 static int usb_ok(void) { return gadget_mode() == 'A' && !strncmp(gadget_state(), "configured", 10); }
@@ -375,9 +503,9 @@ static void blit_part(struct fb *f, int x, int y, int w, int h) {
 
 static void redraw_button(struct fb *f, int slot, int pressed) {
     draw_button(slot, pressed);
-    int x, y, w, h;
+    int x, y, w, h, M = margin();
     btn_rect(slot, &x, &y, &w, &h);
-    blit_part(f, x - 2, y - 2, w + 4, h + 4);
+    blit_part(f, x - M, y - M, w + 2 * M, h + 2 * M);
     fb_present(f);
 }
 
@@ -524,7 +652,23 @@ int deck_ctl(char **argv, int argc, const char *raw, char *out, size_t len) {
         changed();
         return snprintf(out, len, "pressed %d (%s)\n", i + 1, B[i].action);
     }
-    if (c[0]) return snprintf(out, len, "error: deck [set N LABEL ACTION [colour] [toggle] | blank N | reset N|all | page P NAME | press N]\n");
+    if (!strcmp(c, "style") && argc >= 3) {
+        int k = -1;
+        for (int j = 0; j < 3; j++) if (!strcmp(argv[2], style_name[j])) k = j;
+        if (k < 0) return snprintf(out, len, "error: style glossy|glass|flat\n");
+        style = k;
+        store_set("deck.style", style_name[k]);
+        changed();
+        return snprintf(out, len, "style %s\n", style_name[k]);
+    }
+    if (!strcmp(c, "hints") && argc >= 3) {
+        if (strcmp(argv[2], "on") && strcmp(argv[2], "off")) return snprintf(out, len, "error: hints on|off\n");
+        hints = !strcmp(argv[2], "on");
+        store_set("deck.hints", argv[2]);
+        changed();
+        return snprintf(out, len, "hints %s\n", argv[2]);
+    }
+    if (c[0]) return snprintf(out, len, "error: deck [set N LABEL ACTION [colour] [toggle] | blank N | reset N|all | page P NAME | press N | style glossy|glass|flat | hints on|off]\n");
     size_t o = 0;
     for (int p = 0; p < PAGES && o + 200 < len; p++) {
         if (!page_used(p)) continue;
@@ -536,6 +680,7 @@ int deck_ctl(char **argv, int argc, const char *raw, char *out, size_t len) {
                                   b->toggle ? " toggle" : "", b->toggle && toggled[i] ? " (on)" : "");
         }
     }
+    o += (size_t)snprintf(out + o, len - o, "style %s, hints %s\n", style_name[style], hints ? "on" : "off");
     o += (size_t)snprintf(out + o, len - o, "outputs: usb %s, bluetooth %s\n", usb_ok() ? "yes" : "no", bthid_connected() ? "yes" : "no");
     return (int)o;
 }

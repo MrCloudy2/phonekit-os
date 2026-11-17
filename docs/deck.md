@@ -1,6 +1,6 @@
 # DECK mode: the phone as a hotkey pad
 
-DECK turns the phone into a stream-deck style pad: pages of 12 big buttons (4×3 in landscape, 3×4 in portrait).
+DECK turns the phone into a stream-deck style pad: pages of 12 big, near-square keys (6×2 in landscape, 3×4 in portrait).
 Each button sends a keyboard shortcut, a media key, a short key sequence or a piece of text, over USB and, if a
 Bluetooth host is connected, over Bluetooth too. The host sees an ordinary keyboard: **no software to install**.
 
@@ -52,6 +52,19 @@ left right prtsc scrolllock pause capslock numlock menu`, punctuation by name (`
 semicolon quote grave lbracket rbracket backslash`). Modifiers: `ctrl shift alt gui` (also `win super cmd`),
 right-hand `rctrl rshift ralt/altgr rgui`. Colours: `blue red orange amber yellow green lime teal cyan violet
 pink gray white` or `#rrggbb`.
+
+Labels can have up to three lines: `"BE RIGHT\nBACK"` (a backslash and an `n`, inside the quotes).
+
+## Look
+
+```sh
+scripts/ppctl.py deck style glossy    # default: coloured glass-bead keys with a gloss and a metal rim
+scripts/ppctl.py deck style glass     # clear glass keys with a coloured glow
+scripts/ppctl.py deck style flat      # the plain, darker look
+scripts/ppctl.py deck hints off       # hide the small key line under each label
+```
+
+A pressed key sinks in. A toggle that is on glows in its colour and lights its dot; one that is off is dimmed.
 
 The layout is kept in the phone's settings store, so it survives reboots and updates.
 

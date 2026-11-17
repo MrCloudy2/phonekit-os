@@ -1,6 +1,7 @@
 // Host test for DECK mode and the drawing it relies on (ASan + UBSan in CI):
 //  - cv_rrect_stroke with fractional border widths terminates (it once looped forever and starved the watchdog)
 //  - the deck draws in landscape and portrait, two held buttons merge into one keyboard report, release clears it
+//  - glossy, glass and flat styles, multi-line labels and hidden hints draw in both orientations
 //  - actions parse: combos, sequences, text, media keys; bad key names are rejected
 //   gcc -fsanitize=address,undefined -g -D_GNU_SOURCE -Ipaneld tests/test_deck.c paneld/deck.c paneld/gfx.c \
 //       out/<device>/fonts.c -lm -o test_deck && ./test_deck
@@ -62,12 +63,34 @@ int main(void) {
         f.mem = calloc((size_t)f.w * f.h, 4);
         deck_draw(&f);
         /* button 1 (top left) and button 2 (next to it) held together, then lifted */
-        int ids[2] = {1, 2}, xs[2] = {f.w / 8, f.w / 8 + f.w / (f.w > f.h ? 4 : 3)}, ys[2] = {f.h / 4, f.h / 4};
+        int ids[2] = {1, 2}, xs[2] = {f.w / 8, f.w / 8 + f.w / (f.w > f.h ? 6 : 3)}, ys[2] = {f.h / 4, f.h / 4};
         log_[0] = 0;
         deck_touch(&f, ids, xs, ys, 1);
         deck_touch(&f, ids, xs, ys, 2);
         deck_touch(&f, ids, xs, ys, 0);
         CHECK(strstr(log_, "k00:6800;") && strstr(log_, "k00:6869;") && strstr(log_, "k00:0000;"), "merge/release: %s", log_);
+        /* every style draws, with a lit toggle, a pressed key and a three-line label */
+        char o2[4096];
+        char *lbl[] = {"deck", "set", "9", "BE\\nRIGHT\\nBACK", "f21", "violet"};
+        deck_ctl(lbl, 6, "", o2, sizeof o2);
+        char *tog[] = {"deck", "press", "5"};
+        deck_ctl(tog, 3, "", o2, sizeof o2);
+        const char *styles[] = {"glass", "flat", "nope", "glossy"};
+        for (int k = 0; k < 4; k++) {
+            char *st[] = {"deck", "style", (char *)styles[k]};
+            deck_ctl(st, 3, "", o2, sizeof o2);
+            CHECK(k == 2 ? !!strstr(o2, "error") : !!strstr(o2, styles[k]), "style %s: %s", styles[k], o2);
+            deck_draw(&f);
+            deck_touch(&f, ids, xs, ys, 1);
+            deck_touch(&f, ids, xs, ys, 0);
+        }
+        char *hi[] = {"deck", "hints", "off"};
+        deck_ctl(hi, 3, "", o2, sizeof o2);
+        deck_draw(&f);
+        hi[2] = "on";
+        deck_ctl(hi, 3, "", o2, sizeof o2);
+        char *rs[] = {"deck", "reset", "all"};
+        deck_ctl(rs, 3, "", o2, sizeof o2);
     }
     char out[4096];
     char *set1[] = {"deck", "set", "3", "COPY+PASTE", "ctrl+c ctrl+v", "pink"};

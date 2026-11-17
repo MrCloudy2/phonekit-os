@@ -21,12 +21,14 @@ gadgets. Switch between them with the side button, in about two seconds:
 
 | | |
 |---|---|
-| ![DECK mode: STREAM page with scene, mic, camera, record and live buttons](docs/img/deck.png) | ![PHONEBOX system page: processor, graphics, memory and network charts](docs/img/phonebox-system.png) |
-| **DECK**: a hotkey pad for streaming (MIC and LIVE stay lit) | **PHONEBOX**: your PC's vitals at a glance |
-| ![PHONEBOX AI quotas page: Claude, Codex and Antigravity usage](docs/img/phonebox-ai-quotas.png) | ![PHONEBOX music page: now playing and a 7-day forecast](docs/img/phonebox-music.png) |
-| **PHONEBOX**: AI plan usage and reset times | **PHONEBOX**: media controls and the week's weather |
-| ![KEYBOARD mode: a full keyboard with arrows](docs/img/keyboard.png) | ![The mode menu: PHONEBOX, SCREEN, MOUSE, KEYBOARD, COMBO, RESCUE, DECK, SETTINGS](docs/img/modes-menu.png) |
-| **KEYBOARD**: a USB or Bluetooth keyboard | **One phone, many modes**: hold the side button |
+| ![DECK mode in landscape: glossy keys for scenes, mic, camera, record, live](docs/img/deck.png) | <img src="docs/img/deck-portrait.png" alt="DECK mode in portrait: the same keys in a 3 by 4 grid" height="300"> |
+| **DECK**: a stream-deck style hotkey pad (MIC is lit: toggles glow) | **Upright too**: turn the phone and the keys follow |
+| ![PHONEBOX system page: processor, graphics, memory and network charts](docs/img/phonebox-system.png) | ![PHONEBOX music page: now playing and a 7-day forecast](docs/img/phonebox-music.png) |
+| **PHONEBOX**: your PC's vitals at a glance | **PHONEBOX**: media controls and the week's weather |
+| ![PHONEBOX AI quotas page: Claude, Codex and Antigravity usage](docs/img/phonebox-ai-quotas.png) | ![KEYBOARD mode: a full keyboard with arrows](docs/img/keyboard.png) |
+| **PHONEBOX**: AI plan usage and reset times | **KEYBOARD**: a USB or Bluetooth keyboard |
+| ![The mode menu: PHONEBOX, SCREEN, MOUSE, KEYBOARD, COMBO, RESCUE, DECK, SETTINGS](docs/img/modes-menu.png) | |
+| **One phone, many modes**: hold the side button | |
 
 All of these are real screenshots from a Samsung XCover Pro running PhoneKit.
 
