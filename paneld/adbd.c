@@ -46,7 +46,9 @@ static volatile int enabled, online;
 static uint32_t host_max = 4096;
 static pthread_mutex_t wlock = PTHREAD_MUTEX_INITIALIZER;
 static int notify_w = -1, notify_r = -1;
-static unsigned long n_msgs, n_shells, n_tunnels;
+static unsigned long n_msgs, n_shells, n_tunnels, n_replugs;
+static volatile long last_rx_ms, enabled_ms, tx_since_ms; /* host traffic, ENABLE time, a bulk-IN write in progress */
+static volatile int had_host, host_suspended;
 
 /* ---------------------------------------------------------------- streams */
 
@@ -60,6 +62,7 @@ struct stream {
     int okay;                 /* the host acked our last WRTE */
     int closed;
     int discard_input;        /* emulated install: swallow the APK */
+    long t_open;              /* tunnel: when we sent OPEN (the host answers OKAY or CLSE at once) */
     pthread_cond_t cv;
 };
 static struct stream st[MAX_STREAMS];
@@ -94,8 +97,10 @@ static int send_msg(uint32_t cmd, uint32_t a0, uint32_t a1, const void *data, ui
     struct amsg m = {cmd, a0, a1, len, 0, cmd ^ 0xffffffffu};
     for (uint32_t i = 0; i < len; i++) m.crc += ((const uint8_t *)data)[i];
     pthread_mutex_lock(&wlock);
+    tx_since_ms = now_ms(); /* a host whose adb stopped reading leaves this write blocked */
     int r = ep_in < 0 ? -1 : write_all(ep_in, &m, sizeof m);
     if (!r && len) r = write_all(ep_in, data, len);
+    tx_since_ms = 0;
     pthread_mutex_unlock(&wlock);
     return r;
 }
@@ -288,6 +293,7 @@ static void *tunnel_thread(void *v) {
     if (!s) { close(a->fd); free(a); return NULL; }
     s->fd = s->out_fd = a->fd;
     s->okay = 0; /* wait for the host's OKAY to our OPEN */
+    s->t_open = now_ms();
     char dest[40];
     int dl = snprintf(dest, sizeof dest, "%s", a->remote) + 1;
     n_tunnels++;
@@ -482,6 +488,7 @@ static void handle(struct amsg *m, char *data) {
         if (host_max < 1024) host_max = 1024;
         if (online) all_streams_close(); /* host adb restarted */
         online = 1;
+        had_host = 1;
         char banner[256];
         int n = snprintf(banner, sizeof banner,
                          "device::ro.product.name=phonekit;ro.product.model=PhoneKit;ro.product.device=phonekit;features=");
@@ -538,6 +545,7 @@ static void *bulk_thread(void *v) {
         if (read_all(ep_out, &m, sizeof m) < 0) { usleep(100000); continue; }
         if (m.magic != (m.cmd ^ 0xffffffffu) || m.len > MAX_PAYLOAD) { logmsg("adb: bad header %08x", m.cmd); continue; }
         if (m.len && read_all(ep_out, data, m.len) < 0) continue;
+        last_rx_ms = now_ms();
         handle(&m, data);
     }
     return NULL;
@@ -599,6 +607,8 @@ static void *ep0_thread(void *v) {
                 if (ep_out < 0) ep_out = open(FFS_DIR "/ep1", O_RDONLY | O_CLOEXEC);
                 if (ep_in < 0) ep_in = open(FFS_DIR "/ep2", O_WRONLY | O_CLOEXEC);
                 enabled = 1;
+                host_suspended = 0;
+                enabled_ms = now_ms();
                 logmsg("adb: function enabled (ep %d/%d)", ep_out, ep_in);
                 break;
             case FUNCTIONFS_DISABLE:
@@ -608,6 +618,8 @@ static void *ep0_thread(void *v) {
                 online = 0;
                 all_streams_close();
                 break;
+            case FUNCTIONFS_SUSPEND: host_suspended = 1; break; /* the PC went to sleep */
+            case FUNCTIONFS_RESUME: host_suspended = 0; enabled_ms = now_ms(); break;
             case FUNCTIONFS_SETUP: {
                 /* no class requests: stall by reading/writing nothing useful */
                 if (ev[i].u.setup.bRequestType & USB_DIR_IN) (void)!write(ep0, NULL, 0);
@@ -652,6 +664,46 @@ int adbd_init(const char *configfs_gadget) {
 
 int adbd_ready(void) { return ready; }
 
+/* After the PC wakes from sleep, its adb server can drop the phone without the USB link going down: it never
+ * talks to us again, and only a new hotplug makes it look. Two signs, counted only while the link is up and
+ * awake (never while the PC sleeps, so this can't wake it):
+ *   - online, but the host leaves a tunnel OPEN or a bulk write unanswered (a live host answers at once);
+ *   - the function was (re-)enabled, and the host that used adb before never sends CNXN.
+ * Then simulate an unplug/replug. At most 3 tries per outage (10-15 s, 45 s, 2 min); a CNXN resets them, and
+ * nothing happens until some host has used adb since boot (a PC without adb is left alone). Once a second. */
+void adbd_tick(void) {
+    static long last, next_ok;
+    static int stall_s, tries;
+    long now = now_ms();
+    if (now - last < 1000) return;
+    last = now;
+    if (online && last_rx_ms > enabled_ms && tries) { tries = 0; next_ok = 0; } /* healthy again */
+    int awake = enabled && !host_suspended && !strncmp(gadget_state(), "configured", 10);
+    if (!ready || !had_host || !awake || gadget_mode() != 'B') { stall_s = 0; return; }
+    const char *why = NULL;
+    if (online) {
+        long oldest = tx_since_ms;
+        pthread_mutex_lock(&slock);
+        for (int i = 0; i < MAX_STREAMS; i++)
+            if (st[i].kind == S_TUNNEL && !st[i].peer && !st[i].closed && st[i].t_open && (!oldest || st[i].t_open < oldest))
+                oldest = st[i].t_open;
+        pthread_mutex_unlock(&slock);
+        stall_s = oldest && last_rx_ms < oldest ? stall_s + 1 : 0;
+        if (stall_s >= 10) why = "the PC stopped answering adb";
+    } else {
+        stall_s = 0;
+        if (now - enabled_ms >= 15000) why = "the PC's adb never came back";
+    }
+    if (!why || tries >= 3 || now < next_ok) return;
+    tries++;
+    n_replugs++;
+    next_ok = now + (tries == 1 ? 45000 : 120000);
+    enabled_ms = now; /* the re-enable restarts the wait anyway */
+    stall_s = 0;
+    logmsg("adb: %s (after the PC slept?): replugging USB (try %d of 3)", why, tries);
+    gadget_reconnect(1000); /* blocked writes fail with the disconnect; the host sees a new device */
+}
+
 /* 1 if the host set up `adb reverse tcp:<port> …` (the phonebox agent's tunnel) and is connected. */
 int adbd_reverse_active(int port) {
     int r = 0;
@@ -672,6 +724,6 @@ int adbd_stats(char *b, size_t len) {
     int streams = 0, revs = 0;
     for (int i = 0; i < MAX_STREAMS; i++) if (st[i].kind != S_FREE) streams++;
     for (int i = 0; i < MAX_REVERSE; i++) if (rev[i].used) revs++;
-    return snprintf(b, len, "ready %d\nenabled %d\nonline %d\nmsgs %lu\nshells %lu\ntunnels %lu\nstreams %d\nreverse %d\n",
-                    ready, enabled, online, n_msgs, n_shells, n_tunnels, streams, revs);
+    return snprintf(b, len, "ready %d\nenabled %d\nonline %d\nmsgs %lu\nshells %lu\ntunnels %lu\nstreams %d\nreverse %d\nreplugs %lu\nsuspended %d\n",
+                    ready, enabled, online, n_msgs, n_shells, n_tunnels, streams, revs, n_replugs, host_suspended);
 }

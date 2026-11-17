@@ -270,6 +270,7 @@ int adbd_notify_fd(void);
 int adbd_notify_read(void);
 int adbd_stats(char *b, size_t len);
 int adbd_reverse_active(int port);
+void adbd_tick(void);                /* replugs USB when the PC's adb lost the phone (e.g. after sleep) */
 
 /* pbclient.c — PHONEBOX mode: native client of the phonebox desktop agent (through adb reverse) */
 void pb_init(struct fb *f);

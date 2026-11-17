@@ -166,6 +166,7 @@ int main(void) {
         int timeout = touch_pending ? 100 : to_next_s;
         if (hw) {
             gadget_tick();
+            adbd_tick();
             wifi_tick();
             ssh_tick();
             bt_tick();
