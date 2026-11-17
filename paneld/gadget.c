@@ -449,6 +449,37 @@ void gadget_tick(void) {
     } else if (tx > 0) net_heals = 3; /* working: stop checking until the next bind */
 }
 
+/* "Wired" for the radios' keep-off-while-wired option: a computer has set the USB link up (or is asleep with it).
+ * A plain charger never configures us, so it doesn't count. Debounced: on after 3 s, off after 2 s, so the short
+ * unbind/bind of a mode switch doesn't flip the radios. Call often (the main loop does, once a second). */
+static int wired_known;
+int gadget_wired_known(void) { gadget_wired(); return wired_known; }
+int gadget_wired(void) {
+    static int state, raw = -1;
+    static long since;
+    const char *s = gadget_state();
+    int w = !strncmp(s, "configured", 10) || !strncmp(s, "suspended", 9);
+    long now = now_ms();
+    if (w != raw) { raw = w; since = now; }
+    /* At boot USB detection is slow (the link stays "not attached" ~12 s on the XCover Pro). Decide "not wired"
+     * early only if no power comes in on the cable; with power, give a computer until 25 s to set the link up
+     * (else it's a charger). */
+    int unwired_ms = 2000;
+    if (!wired_known) {
+        char u[8] = "", ac[8] = "";
+        read_file("/sys/class/power_supply/usb/online", u, sizeof u);
+        read_file("/sys/class/power_supply/ac/online", ac, sizeof ac);
+        int vbus = u[0] == '1' || ac[0] == '1';
+        if (vbus && now < 25000) unwired_ms = 1 << 30; /* not before 25 s */
+    }
+    if ((state != raw || !wired_known) && now - since >= (raw ? 3000 : unwired_ms)) {
+        state = raw;
+        wired_known = 1;
+        logmsg("usb: %s (radios that keep off while wired follow)", state ? "wired to a computer" : "not wired");
+    }
+    return state;
+}
+
 /* UDC state: "configured" when a host has set us up, "not attached", "default", ... */
 const char *gadget_state(void) {
     static char st[32];

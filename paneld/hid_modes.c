@@ -292,9 +292,10 @@ static const char *const menu_items[] = {"PHONEBOX", "SCREEN", "MOUSE", "KEYBOAR
 enum { MI_PANEL, MI_SCREEN, MI_MOUSE, MI_KEYBOARD, MI_COMBO, MI_RESCUE, MI_DECK, MI_MODEM, MI_WEBCAM, MI_SETTINGS, MI_CLOSE };
 
 /* ---------------------------------------------------------------- settings */
-#define SET_N 11
-static const char *const set_names[SET_N] = {"ROTATION", "BRIGHTNESS", "DIM AFTER", "SCREEN OFF", "CHARGE LIMIT", "USB NETWORK",
-                                             "WHEN PC IS GONE", "REBOOT TO ROM", "DOWNLOAD MODE", "POWER OFF", "BACK"};
+#define SET_N 13
+static const char *const set_names[SET_N] = {"WI-FI", "BLUETOOTH", "ROTATION", "BRIGHTNESS", "DIM AFTER", "SCREEN OFF", "CHARGE LIMIT",
+                                             "USB NETWORK", "WHEN PC IS GONE", "REBOOT TO ROM", "DOWNLOAD MODE", "POWER OFF", "BACK"};
+#define SET_OFF 2 /* the entries below were numbered 0..10 before WI-FI and BLUETOOTH came first */
 static int arm_item = -1;   /* maintenance actions need a second tap within 4 s */
 static long arm_until;
 static const char *const standby_vals[] = {"hold", "ambient", "sleep"};
@@ -307,39 +308,64 @@ static int idx_of(const int *v, int n, int x) { for (int i = 0; i < n; i++) if (
 
 static void set_value(int i, char *buf, size_t len) {
     switch (i) {
-    case 0: { int r = store_get_int("rotation", -1);
+    case 0: { char ss[64] = "", ip[32] = "";
+              int up = wifi_status(ss, sizeof ss, ip, sizeof ip);
+              if (!ss[0]) snprintf(buf, len, "OFF - TAP TO SET UP");
+              else if (!store_get_int("wifi.on", 1)) snprintf(buf, len, "OFF");
+              else if (!wifi_wanted()) snprintf(buf, len, "OFF WHILE WIRED");
+              else snprintf(buf, len, "%s %.24s", up ? "ON" : "JOINING", ss);
+              for (char *q = buf; *q; q++) if (*q >= 'a' && *q <= 'z') *q = (char)(*q - 'a' + 'A');
+              break; }
+    case 1: snprintf(buf, len, "%s", !store_get_int("bt", 0) ? "OFF" : !bt_wanted() ? "OFF WHILE WIRED" : bthid_connected() ? "ON - CONNECTED" : "ON"); break;
+    case 2: { int r = store_get_int("rotation", -1);
               if (r < 0) snprintf(buf, len, "AUTO (NOW %d)", fb->rot); else snprintf(buf, len, "%d", r); break; }
-    case 1: snprintf(buf, len, "%d", pcfg.bright); break;
-    case 2: pcfg.dim_after_s ? snprintf(buf, len, "%d S", pcfg.dim_after_s) : snprintf(buf, len, "NEVER"); break;
-    case 3: pcfg.off_after_s ? snprintf(buf, len, "%d MIN", pcfg.off_after_s / 60) : snprintf(buf, len, "NEVER"); break;
-    case 4: pcfg.limiter ? snprintf(buf, len, "%d-%d %%", pcfg.charge_lo, pcfg.charge_hi) : snprintf(buf, len, "OFF"); break;
-    case 5: snprintf(buf, len, "%s (REBOOT)", store_get("usb_net", "rndis")); break;
-    case 6: { const char *v = store_get("standby", "hold");
+    case 3: snprintf(buf, len, "%d", pcfg.bright); break;
+    case 4: pcfg.dim_after_s ? snprintf(buf, len, "%d S", pcfg.dim_after_s) : snprintf(buf, len, "NEVER"); break;
+    case 5: pcfg.off_after_s ? snprintf(buf, len, "%d MIN", pcfg.off_after_s / 60) : snprintf(buf, len, "NEVER"); break;
+    case 6: pcfg.limiter ? snprintf(buf, len, "%d-%d %%", pcfg.charge_lo, pcfg.charge_hi) : snprintf(buf, len, "OFF"); break;
+    case 7: snprintf(buf, len, "%s (REBOOT)", store_get("usb_net", "rndis")); break;
+    case 8: { const char *v = store_get("standby", "hold");
               snprintf(buf, len, "%s", !strcmp(v, "ambient") ? "AMBIENT CLOCK" : !strcmp(v, "sleep") ? "SCREEN OFF" : "KEEP LAST PAGE"); break; }
-    case 7: case 8: case 9:
+    case 9: case 10: case 11:
         if (arm_item == i && now_ms() < arm_until) snprintf(buf, len, "TAP AGAIN TO CONFIRM");
-        else snprintf(buf, len, "%s", i == 7 ? "THE OS ON THE BOOT PARTITION" : i == 8 ? "FOR FLASHING (HEIMDALL/ODIN)" : "UNTIL POWER KEY OR CABLE");
+        else snprintf(buf, len, "%s", i == 9 ? "THE OS ON THE BOOT PARTITION" : i == 10 ? "FOR FLASHING (HEIMDALL/ODIN)" : "UNTIL POWER KEY OR CABLE");
         break;
     default: buf[0] = 0;
     }
 }
 
-#define SET_Y0 260
-#define SET_ITEM_H ((fb->h - SET_Y0 - 80) / SET_N)
+#define SET_Y0 (fb->w > fb->h ? 200 : 260)
+/* landscape: two columns; portrait: one */
+static int set_cols(void) { return fb->w > fb->h ? 2 : 1; }
+static int set_rows(void) { return (SET_N + set_cols() - 1) / set_cols(); }
+#define SET_ITEM_H ((fb->h - SET_Y0 - 60) / set_rows())
+static void set_rect(int i, int *x, int *y, int *w) {
+    int c = i / set_rows(), r = i % set_rows(), cw = (fb->w - 80) / set_cols();
+    *x = 40 + c * cw; *y = SET_Y0 + r * SET_ITEM_H; *w = cw - (set_cols() > 1 ? 20 : 0);
+}
+static int set_at(int px, int py) {
+    for (int i = 0; i < SET_N; i++) {
+        int x, y, w;
+        set_rect(i, &x, &y, &w);
+        if (px >= x && px < x + w && py >= y && py < y + SET_ITEM_H) return i;
+    }
+    return -1;
+}
 
 static void draw_settings(void) {
     uint32_t bg = fb_color(fb, 10, 12, 18), fg = fb_color(fb, 235, 238, 245), dim = fb_color(fb, 150, 190, 255);
     fb_fill(fb, 0, 0, fb->w, fb->h, bg);
-    fb_text(fb, 60, 100, 7, "SETTINGS", fg, bg);
-    int sc = fb->w > fb->h ? 4 : 5;
+    fb_text(fb, 60, fb->w > fb->h ? 70 : 100, 7, "SETTINGS", fg, bg);
+    int sc = fb->w > fb->h ? 3 : 5;
     for (int i = 0; i < SET_N; i++) {
-        int y = SET_Y0 + i * SET_ITEM_H;
+        int x, y, w;
+        set_rect(i, &x, &y, &w);
         uint32_t b = i == set_sel ? fb_color(fb, 50, 95, 170) : fb_color(fb, 32, 36, 48);
-        fb_fill(fb, 40, y + 8, fb->w - 80, SET_ITEM_H - 16, b);
-        fb_text(fb, 80, y + SET_ITEM_H / 2 - 4 * sc - 18, sc, set_names[i], fg, b);
+        fb_fill(fb, x, y + 6, w, SET_ITEM_H - 12, b);
+        fb_text(fb, x + 40, y + SET_ITEM_H / 2 - 4 * sc - 12, sc, set_names[i], fg, b);
         char v[48];
         set_value(i, v, sizeof v);
-        fb_text(fb, 80, y + SET_ITEM_H / 2 + 6, sc - 1, v, dim, b);
+        fb_text(fb, x + 40, y + SET_ITEM_H / 2 + 6, sc > 3 ? sc - 1 : 2, v, dim, b);
     }
 }
 
@@ -350,30 +376,31 @@ static void redraw(void);
 /* Steps the value of setting i (dir +1/-1). */
 static void set_step(int i, int dir) {
     switch (i) {
-    case 0: { int k = idx_of(rot_vals, 5, store_get_int("rotation", -1)); k = (k + dir + 5) % 5;
+    case 0: case 1: netui_open(fb, i == 0 ? NET_WIFI : NET_BT); return;
+    case 2: { int k = idx_of(rot_vals, 5, store_get_int("rotation", -1)); k = (k + dir + 5) % 5;
               save_int("rotation", rot_vals[k]);
               hm_set_rotation(rot_vals[k] < 0 ? fb->rot : rot_vals[k]); return; /* redraws */ }
-    case 1: power_bright_step(dir); break;
-    case 2: { int k = (idx_of(dim_vals, 5, pcfg.dim_after_s) + dir + 5) % 5; pcfg.dim_after_s = dim_vals[k];
+    case 3: power_bright_step(dir); break;
+    case 4: { int k = (idx_of(dim_vals, 5, pcfg.dim_after_s) + dir + 5) % 5; pcfg.dim_after_s = dim_vals[k];
               save_int("power.dim_after_s", pcfg.dim_after_s); break; }
-    case 3: { int k = (idx_of(off_vals, 5, pcfg.off_after_s) + dir + 5) % 5; pcfg.off_after_s = off_vals[k];
+    case 5: { int k = (idx_of(off_vals, 5, pcfg.off_after_s) + dir + 5) % 5; pcfg.off_after_s = off_vals[k];
               save_int("power.off_after_s", pcfg.off_after_s); break; }
-    case 4: { int k = pcfg.limiter ? idx_of(chg_lo, 3, pcfg.charge_lo) : 3; k = (k + dir + 4) % 4;
+    case 6: { int k = pcfg.limiter ? idx_of(chg_lo, 3, pcfg.charge_lo) : 3; k = (k + dir + 4) % 4;
               pcfg.limiter = k < 3; pcfg.charge_lo = chg_lo[k]; pcfg.charge_hi = chg_hi[k];
               save_int("power.limiter", pcfg.limiter); save_int("power.charge_lo", pcfg.charge_lo);
               save_int("power.charge_hi", pcfg.charge_hi); break; }
-    case 5: store_set("usb_net", strcmp(store_get("usb_net", "rndis"), "rndis") ? "rndis" : "ncm"); break;
-    case 6: { const char *v = store_get("standby", "hold");
+    case 7: store_set("usb_net", strcmp(store_get("usb_net", "rndis"), "rndis") ? "rndis" : "ncm"); break;
+    case 8: { const char *v = store_get("standby", "hold");
               int k = !strcmp(v, "ambient") ? 1 : !strcmp(v, "sleep") ? 2 : 0;
               store_set("standby", standby_vals[(k + dir + 3) % 3]); break; }
-    case 7: case 8: case 9:
+    case 9: case 10: case 11:
         if (arm_item != i || now_ms() > arm_until) { arm_item = i; arm_until = now_ms() + 4000; break; }
         arm_item = -1;
-        if (i == 7) do_reboot("settings", NULL);
-        else if (i == 8) do_reboot("settings", "download");
+        if (i == 9) do_reboot("settings", NULL);
+        else if (i == 10) do_reboot("settings", "download");
         else do_poweroff("settings");
         break;
-    case 10: settings_open = 0; redraw(); return;
+    case 12: settings_open = 0; redraw(); return;
     }
     draw_settings();
     fb_present(fb);
@@ -405,6 +432,7 @@ static int current_item(void) { return gadget_mode() == 'A' ? MI_SCREEN + input_
 
 static void menu_choose(int i) {
     menu_open = 0;
+    if (i != MI_SETTINGS && settings_open) { netui_close(); settings_open = 0; } /* a mode chosen from the PC */
     if (i >= MI_SCREEN && i <= MI_DECK) {
         int had_gud = hm_wants_gud();
         if (input_mode == IN_DECK) deck_release_all();
@@ -460,11 +488,10 @@ static void settings_frame(const int *ids, const int *xs, const int *ys, int n) 
         return;
     }
     if (set_touch_id < 0 && n > 0) {
-        int it = (ys[0] - SET_Y0) / (SET_ITEM_H ? SET_ITEM_H : 1);
         set_touch_id = ids[0];
-        set_touch_item = ys[0] >= SET_Y0 && it < SET_N ? it : -1;
+        set_touch_item = set_at(xs[0], ys[0]);
         /* brightness: left half = down, handled by stepping -1 on release from the left */
-        if (set_touch_item == 1 && xs[0] < fb->w / 2) { set_touch_item = -1; power_bright_step(-1); }
+        if (set_touch_item == 3 && xs[0] < fb->w / 2) { set_touch_item = -1; power_bright_step(-1); }
         if (set_touch_item >= 0) { set_sel = set_touch_item; }
         draw_settings(); fb_present(fb);
     }
@@ -497,6 +524,7 @@ void hm_menu_toggle(void) {
 
 /* Keys while the menu is open: vol/top = move, xcover/power = select. Returns 1 if consumed. */
 int hm_menu_key(int code) {
+    if (settings_open && netui_active()) return netui_key(code);
     if (settings_open) {
         if (code == KEY_VOLUMEUP || code == KEY_MACRO17) set_sel = (set_sel + SET_N - 1) % SET_N;
         else if (code == KEY_VOLUMEDOWN) set_sel = (set_sel + 1) % SET_N;
@@ -521,7 +549,7 @@ int hm_menu_key(int code) {
 static void redraw(void) {
     int o = hm_owner();
     gud_set_visible(o == OWN_GUD);
-    if (o == OWN_MENU) { if (settings_open) draw_settings(); else draw_menu(); }
+    if (o == OWN_MENU) { if (settings_open && netui_active()) netui_draw(); else if (settings_open) draw_settings(); else draw_menu(); }
     else if (o == OWN_INPUT) { if (input_mode == IN_DECK) deck_draw(fb); else if (input_mode == IN_RESCUE) term_draw(); else if (input_mode == IN_TRACKPAD) draw_trackpad(); else draw_keyboard(); }
     else if (o == OWN_PAGE) ui_page_set(ui_page());
     if (o != OWN_GUD) fb_present(fb);
@@ -549,6 +577,9 @@ void hm_init(struct fb *f) {
 int hm_tick(void) {
     if (!fb || !fb->mem) return 1000;
     if (hm_owner() != last_owner) redraw();
+    if (settings_open && netui_active() && last_owner == OWN_MENU) { netui_tick(); return 1000; }
+    if (settings_open && !netui_active() && last_owner == OWN_MENU) { /* live values (Wi-Fi joining, BT) */
+        static long t; if (now_ms() - t > 2000) { t = now_ms(); draw_settings(); fb_present(fb); } }
     if (input_mode == IN_DECK && last_owner == OWN_INPUT) return deck_tick(fb);
     /* DEL auto-repeat while held */
     if (kb_down_row >= 0 && rows[kb_down_row][kb_down_col].code == 0x2a && now_ms() - kb_down_ms > 500 &&
@@ -566,7 +597,7 @@ int hm_touch_frame(void) {
     int n = touch_active_px(ids, xs, ys, 10);
     int o = hm_owner();
     if (o == OWN_PAGE && ui_page() == UI_PAGE_PANEL) { panel_touch(ids, xs, ys, n); return 1; }
-    if (o == OWN_MENU) { if (settings_open) settings_frame(ids, xs, ys, n); else menu_frame(ids, xs, ys, n); return 1; }
+    if (o == OWN_MENU) { if (settings_open && netui_active()) netui_touch(ids, xs, ys, n); else if (settings_open) settings_frame(ids, xs, ys, n); else menu_frame(ids, xs, ys, n); return 1; }
     if (o != OWN_INPUT) return 0;
     if (input_mode == IN_RESCUE) return term_touch(ids, xs, ys, n);
     if (input_mode == IN_DECK) return deck_touch(fb, ids, xs, ys, n);
@@ -588,6 +619,16 @@ int hm_status(char *b, size_t len) {
 
 void hm_set_phonebox(void) { if (input_mode == IN_DECK) deck_release_all(); menu_choose(MI_PANEL); }
 void hm_set_modem(void) { menu_choose(MI_MODEM); }
+
+/* netui closed (back to the list) */
+void hm_settings_redraw(void) { if (settings_open) { draw_settings(); fb_present(fb); } }
+
+/* ctl: open Settings, optionally straight onto WI-FI or BLUETOOTH (for tests and screenshots) */
+void hm_open_settings(int which) {
+    menu_open = 0; settings_open = 1; set_sel = 0;
+    redraw();
+    if (which != NET_NONE) netui_open(fb, which);
+}
 
 /* m = input mode (IN_TOUCHSCREEN..IN_COMBO), not a menu index (MI_PANEL is 0 there) */
 void hm_set_mode(int m) { if (m >= 0 && m < IN_MODES) menu_choose(MI_SCREEN + m); }

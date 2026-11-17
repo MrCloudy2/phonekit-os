@@ -3,6 +3,8 @@
 // the chip's Bluetooth service).
 //
 //   ppctl bt on|off      enable/disable (persists)
+//   ppctl bt wired-off on|off  keep Bluetooth off while a computer is on the USB cable (default on)
+//   ppctl bt forget      drop the paired host
 //   ppctl bt             status
 //   ppctl bt scan        power hci0 up and run an 8 s inquiry (classic discovery) via a raw HCI socket
 //   ppctl bt pair        discoverable for 3 minutes (pair from the host)
@@ -114,8 +116,26 @@ static void set_address(void) {
     if (fd >= 0) { (void)!write(fd, s, strlen(s)); close(fd); }
 }
 
+static long restart_until; /* bt forget: off for a moment so the kernel drops the old link keys */
+
+/* Should Bluetooth run now? Enabled, and no computer on the cable while "keep off while wired" is on. */
+int bt_wanted(void) {
+    if (!store_get_int("bt", 0)) return 0;
+    if (!store_get_int("bt.wired_off", 1)) return 1;
+    return gadget_wired_known() && !gadget_wired();
+}
+
+void bt_forget(void) {
+    bthid_disconnect();
+    store_unset("bt.keys");
+    restart_until = now_ms() + 2500;
+}
+
 void bt_tick(void) {
-    want = store_get_int("bt", 0) && access(H4, F_OK) == 0;
+    static int last = -1;
+    int w = bt_wanted() && now_ms() >= restart_until;
+    if (w != last) { if (last >= 0) logmsg("bt: %s", w ? "on" : "off (not needed now)"); last = w; }
+    want = w && access(H4, F_OK) == 0;
     bthid_set(want);
     if (want && !running) {
         running = 1;
@@ -194,6 +214,12 @@ int bt_ctl(char **argv, int argc, char *out, size_t len) {
         bt_tick();
         return snprintf(out, len, "bluetooth %s\n", argv[1]);
     }
+    if (argc > 2 && !strcmp(argv[1], "wired-off")) {
+        store_set("bt.wired_off", !strcmp(argv[2], "on") ? "1" : "0");
+        bt_tick();
+        return snprintf(out, len, "wired-off %s\n", argv[2]);
+    }
+    if (argc > 1 && !strcmp(argv[1], "forget")) { bt_forget(); return snprintf(out, len, "paired host forgotten\n"); }
     if (argc > 1 && !strcmp(argv[1], "scan")) return bt_scan(out, len);
     if (argc > 1 && !strcmp(argv[1], "type") && argc > 2) {
         if (!bthid_connected()) return snprintf(out, len, "error: no Bluetooth host connected\n");
@@ -214,7 +240,7 @@ int bt_ctl(char **argv, int argc, char *out, size_t len) {
     if (read_file("/sys/class/bluetooth/hci0/address", addr, sizeof addr) < 0 || !addr[0])
         read_file("/mnt/vendor/efs/bluetooth/bt_addr", addr, sizeof addr); /* what set_address() gave the chip */
     addr[strcspn(addr, "\r\n")] = 0;
-    return snprintf(out, len, "enabled %d\nbridge %s\nhci0 %s\naddress %s\npackets_up %lu\npackets_down %lu\ndropped_while_down %lu\nhid %s\n",
-                    store_get_int("bt", 0), running ? "running" : "stopped",
+    return snprintf(out, len, "enabled %d\nwired_off %d\nwired %d\nbridge %s\nhci0 %s\naddress %s\npackets_up %lu\npackets_down %lu\ndropped_while_down %lu\nhid %s\n",
+                    store_get_int("bt", 0), store_get_int("bt.wired_off", 1), gadget_wired(), running ? "running" : "stopped",
                     access("/sys/class/bluetooth/hci0", F_OK) == 0 ? "present" : "absent", addr[0] ? addr : "-", pk_up, pk_down, pk_drop, bthid_status());
 }

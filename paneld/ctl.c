@@ -491,6 +491,7 @@ static void dispatch(struct app *a, char *l, size_t len) {
         else if (argc > 1 && !strcmp(argv[1], "modem")) { ok(NULL); tcdrain(fd); usleep(100000); hm_set_modem(); return; }
         else if (argc > 1 && !strcmp(argv[1], "next")) hm_mode_step(1);
         else if (argc > 1 && !strcmp(argv[1], "menu")) hm_menu_toggle();
+        else if (argc > 1 && !strcmp(argv[1], "settings")) hm_open_settings(argc > 2 && !strcmp(argv[2], "wifi") ? NET_WIFI : argc > 2 && !strcmp(argv[2], "bt") ? NET_BT : NET_NONE);
         else if (argc > 1) hm_set_mode(atoi(argv[1]));
         char b2[256];
         int n2 = hm_status(b2, sizeof b2);

@@ -90,8 +90,10 @@ One image, switchable at runtime with the phone's side buttons (or from the host
 The keyboard, trackpad and DECK modes also work over **Bluetooth** (the phone pairs as a keyboard + mouse with
 phones, tablets, TVs and PCs).
 
-Plus: rotation (auto via the phone's sensor hub, or manual) in every mode, an on-device Settings screen, a
-charge limiter and thermal guard, a watchdog, and a debug serial console over USB.
+Plus: rotation (auto via the phone's sensor hub, or manual) in every mode, an on-device Settings screen with a
+Wi-Fi manager (scan, type the password on screen) and Bluetooth pairing, a charge limiter and thermal guard, a
+watchdog, and a debug serial console over USB. Radios stay off unless needed, and by default also while a computer
+is on the cable. **How to use the buttons, the mode menu and Settings: [docs/settings.md](docs/settings.md).**
 
 **Works with phonebox desktop.** Install the [phonebox agent](https://github.com/ersinkoc/phonebox) on your PC as
 usual and plug the phone in, in PHONEBOX mode. The agent finds it over adb by itself, exactly as it finds a phone running

@@ -346,3 +346,23 @@ int wifi_tether_active(void);
 void wifi_tether_set(int on, int replug);
 void hm_set_modem(void);
 void pb_route_tick(void);           /* pbclient.c: USB wins over Wi-Fi when the cable is back */
+int gadget_wired_known(void);       /* gadget_wired() has decided once since boot */
+int gadget_wired(void);              /* a computer is on the USB cable (debounced), for keep-off-while-wired */
+int wifi_wanted(void);
+int wifi_running(void);
+const char *wifi_join(const char *ssid, const char *psk);
+void wifi_forget(void);
+void wifi_radio_idle(void);
+int bt_wanted(void);
+void bt_forget(void);
+/* netui.c: Settings -> WI-FI and BLUETOOTH screens */
+enum { NET_NONE, NET_WIFI, NET_BT };
+void netui_open(struct fb *f, int which);
+int netui_active(void);
+void netui_close(void);
+void netui_draw(void);
+void netui_touch(const int *ids, const int *xs, const int *ys, int n);
+int netui_tick(void);
+int netui_key(int code);
+void hm_settings_redraw(void);
+void hm_open_settings(int which);
