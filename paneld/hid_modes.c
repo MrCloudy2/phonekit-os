@@ -16,10 +16,11 @@ static int last_owner = -1;
 static int input_mode = IN_TOUCHSCREEN;
 static int menu_open, menu_sel;
 static int settings_open, set_sel;
-static const char *const mode_name[IN_MODES] = {"SCREEN", "MOUSE", "KEYBOARD", "COMBO", "RESCUE"};
+static const char *const mode_name[IN_MODES] = {"SCREEN", "MOUSE", "KEYBOARD", "COMBO", "RESCUE", "DECK"};
 
 int hm_input_mode(void) { return input_mode; }
 int hm_menu_open(void) { return menu_open; }
+int hm_wants_gud(void) { return input_mode != IN_RESCUE && input_mode != IN_DECK; }
 
 int hm_owner(void) {
     if (menu_open || settings_open) return OWN_MENU;
@@ -59,6 +60,21 @@ static void kbd_report(int mods, int code) {
     if (hid_open(&kbd_fd, "/dev/hidg2") < 0) return;
     uint8_t r[8] = {(uint8_t)mods, 0, (uint8_t)code, 0, 0, 0, 0, 0};
     if (write(kbd_fd, r, sizeof r) < 0 && errno != EAGAIN) { close(kbd_fd); kbd_fd = -1; }
+}
+
+void hm_kbd_raw(int mods, const unsigned char keys[6]) {
+    if (bthid_connected()) bthid_keys(mods, keys);
+    if (hid_open(&kbd_fd, "/dev/hidg2") < 0) return;
+    uint8_t r[8] = {(uint8_t)mods, 0, keys[0], keys[1], keys[2], keys[3], keys[4], keys[5]};
+    if (write(kbd_fd, r, sizeof r) < 0 && errno != EAGAIN) { close(kbd_fd); kbd_fd = -1; }
+}
+
+static int cons_fd = -1;
+void hm_consumer(int usage) {
+    if (bthid_connected()) bthid_consumer(usage);
+    if (hid_open(&cons_fd, "/dev/hidg3") < 0) return;
+    uint8_t r[2] = {(uint8_t)usage, (uint8_t)(usage >> 8)};
+    if (write(cons_fd, r, sizeof r) < 0 && errno != EAGAIN) { close(cons_fd); cons_fd = -1; }
 }
 
 static void key_tap(int mods, int code) {
@@ -271,9 +287,9 @@ static void keyboard_frame(const int *ids, const int *xs, const int *ys, int n) 
 /* ---------------------------------------------------------------- menu */
 
 /* top-level phone modes, in the order XCover-short cycles through them */
-static const char *const menu_items[] = {"PHONEBOX", "SCREEN", "MOUSE", "KEYBOARD", "COMBO", "RESCUE", "WEBCAM (LATER)", "SETTINGS", "CLOSE"};
-#define MENU_N 9
-enum { MI_PANEL, MI_SCREEN, MI_MOUSE, MI_KEYBOARD, MI_COMBO, MI_RESCUE, MI_WEBCAM, MI_SETTINGS, MI_CLOSE };
+static const char *const menu_items[] = {"PHONEBOX", "SCREEN", "MOUSE", "KEYBOARD", "COMBO", "RESCUE", "DECK", "WEBCAM (LATER)", "SETTINGS", "CLOSE"};
+#define MENU_N 10
+enum { MI_PANEL, MI_SCREEN, MI_MOUSE, MI_KEYBOARD, MI_COMBO, MI_RESCUE, MI_DECK, MI_WEBCAM, MI_SETTINGS, MI_CLOSE };
 
 /* ---------------------------------------------------------------- settings */
 #define SET_N 11
@@ -376,7 +392,10 @@ static void draw_menu(void) {
         int y = MENU_Y0 + i * MENU_ITEM_H;
         uint32_t b = i == menu_sel ? fb_color(fb, 50, 95, 170) : fb_color(fb, 32, 36, 48);
         fb_fill(fb, 40, y + 10, fb->w - 80, MENU_ITEM_H - 20, b);
-        fb_text(fb, 90, y + MENU_ITEM_H / 2 - 28, 7, menu_items[i], fg, b);
+        int sc = (MENU_ITEM_H - 28) / 8;
+        if (sc > 7) sc = 7;
+        if (sc < 3) sc = 3;
+        fb_text(fb, 90, y + MENU_ITEM_H / 2 - 4 * sc, sc, menu_items[i], fg, b);
     }
 }
 
@@ -386,15 +405,16 @@ static int current_item(void) { return gadget_mode() == 'A' ? MI_SCREEN + input_
 
 static void menu_choose(int i) {
     menu_open = 0;
-    if (i >= MI_SCREEN && i <= MI_RESCUE) {
-        int was_rescue = input_mode == IN_RESCUE;
+    if (i >= MI_SCREEN && i <= MI_DECK) {
+        int had_gud = hm_wants_gud();
+        if (input_mode == IN_DECK) deck_release_all();
         input_mode = i - MI_SCREEN;
         char v[4];
         snprintf(v, sizeof v, "%d", input_mode);
         store_set("input_mode", v);
-        /* RESCUE leaves the GUD display out of the gadget (a server or desktop shouldn't get a phantom
-         * monitor): re-bind when entering or leaving it */
-        if (gadget_mode() != 'A' || was_rescue != (input_mode == IN_RESCUE)) { store_set("usb_mode", "A"); gadget_set_mode('A'); }
+        /* RESCUE and DECK leave the GUD display out of the gadget (a server or desktop shouldn't get a phantom
+         * monitor): re-bind when entering or leaving them */
+        if (gadget_mode() != 'A' || had_gud != hm_wants_gud()) { store_set("usb_mode", "A"); gadget_set_mode('A'); }
         buttons = 0; sticky = 0;
         logmsg("mode: %s", mode_name[input_mode]);
         ui_toast(mode_name[input_mode]);
@@ -491,7 +511,7 @@ static void redraw(void) {
     int o = hm_owner();
     gud_set_visible(o == OWN_GUD);
     if (o == OWN_MENU) { if (settings_open) draw_settings(); else draw_menu(); }
-    else if (o == OWN_INPUT) { if (input_mode == IN_RESCUE) term_draw(); else if (input_mode == IN_TRACKPAD) draw_trackpad(); else draw_keyboard(); }
+    else if (o == OWN_INPUT) { if (input_mode == IN_DECK) deck_draw(fb); else if (input_mode == IN_RESCUE) term_draw(); else if (input_mode == IN_TRACKPAD) draw_trackpad(); else draw_keyboard(); }
     else if (o == OWN_PAGE) ui_page_set(ui_page());
     if (o != OWN_GUD) fb_present(fb);
     last_owner = o;
@@ -518,6 +538,7 @@ void hm_init(struct fb *f) {
 int hm_tick(void) {
     if (!fb || !fb->mem) return 1000;
     if (hm_owner() != last_owner) redraw();
+    if (input_mode == IN_DECK && last_owner == OWN_INPUT) return deck_tick(fb);
     /* DEL auto-repeat while held */
     if (kb_down_row >= 0 && rows[kb_down_row][kb_down_col].code == 0x2a && now_ms() - kb_down_ms > 500 &&
         now_ms() - kb_repeat_ms >= 60) {
@@ -537,6 +558,7 @@ int hm_touch_frame(void) {
     if (o == OWN_MENU) { if (settings_open) settings_frame(ids, xs, ys, n); else menu_frame(ids, xs, ys, n); return 1; }
     if (o != OWN_INPUT) return 0;
     if (input_mode == IN_RESCUE) return term_touch(ids, xs, ys, n);
+    if (input_mode == IN_DECK) return deck_touch(fb, ids, xs, ys, n);
     if (input_mode == IN_TRACKPAD) {
         tp.y0 = 0; tp.y1 = fb->h; tp.with_buttons = 1;
         trackpad_frame(xs, ys, n);

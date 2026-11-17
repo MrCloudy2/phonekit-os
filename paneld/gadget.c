@@ -186,11 +186,17 @@ static const uint8_t kbd_desc[] = {
     0x95, 0x01, 0x75, 0x08, 0x81, 0x03,
     0x95, 0x05, 0x75, 0x01, 0x05, 0x08, 0x19, 0x01, 0x29, 0x05, 0x91, 0x02,
     0x95, 0x01, 0x75, 0x03, 0x91, 0x03,
-    0x95, 0x06, 0x75, 0x08, 0x15, 0x00, 0x25, 0x65, 0x05, 0x07, 0x19, 0x00, 0x29, 0x65, 0x81, 0x00,
+    0x95, 0x06, 0x75, 0x08, 0x15, 0x00, 0x26, 0xE7, 0x00, 0x05, 0x07, 0x19, 0x00, 0x29, 0xE7, 0x81, 0x00, /* keys 0..0xE7 (F13-F24) */
     0xC0,
 };
 
-static const char *mouse_fn, *kbd_fn;
+/* Consumer control (media keys): one 16-bit usage, no report id. 2-byte report. /dev/hidg3. */
+static const uint8_t cons_desc[] = {
+    0x05, 0x0C, 0x09, 0x01, 0xA1, 0x01, 0x15, 0x00, 0x26, 0xFF, 0x03, 0x19, 0x00, 0x2A, 0xFF, 0x03,
+    0x75, 0x10, 0x95, 0x01, 0x81, 0x00, 0xC0,
+};
+
+static const char *mouse_fn, *kbd_fn, *cons_fn;
 
 static int setup_hid(void) {
     uint8_t desc[512];
@@ -198,11 +204,13 @@ static int setup_hid(void) {
     memcpy(desc + n, hid_head, sizeof hid_head); n += sizeof hid_head;
     for (int i = 0; i < HID_CONTACTS; i++) { memcpy(desc + n, hid_finger, sizeof hid_finger); n += sizeof hid_finger; }
     memcpy(desc + n, hid_tail, sizeof hid_tail); n += sizeof hid_tail;
-    /* creation order = /dev/hidgN order: 0 touchscreen, 1 mouse, 2 keyboard */
-    const char *t[] = {"hid.usb0", "hid.gs0"}, *m[] = {"hid.usb1", "hid.gs1"}, *k[] = {"hid.usb2", "hid.gs2"};
+    /* creation order = /dev/hidgN order: 0 touchscreen, 1 mouse, 2 keyboard, 3 media keys */
+    const char *t[] = {"hid.usb0", "hid.gs0"}, *m[] = {"hid.usb1", "hid.gs1"}, *k[] = {"hid.usb2", "hid.gs2"},
+               *c[] = {"hid.usb3", "hid.gs3"};
     int rc = make_hid(t, 2, &hid_fn, 0, 0, HID_REPORT_LEN, desc, n);
     make_hid(m, 2, &mouse_fn, 0, 0, 7, mouse_desc, sizeof mouse_desc);
     make_hid(k, 2, &kbd_fn, 1, 1, 8, kbd_desc, sizeof kbd_desc);
+    make_hid(c, 2, &cons_fn, 0, 0, 2, cons_desc, sizeof cons_desc);
     return rc;
 }
 
@@ -377,6 +385,7 @@ int gadget_set_mode(char m) {
     if (hid_fn) unlink_function(hid_fn);
     if (mouse_fn) unlink_function(mouse_fn);
     if (kbd_fn) unlink_function(kbd_fn);
+    if (cons_fn) unlink_function(cons_fn);
     if (ncm_fn) unlink_function(ncm_fn);
     unlink_function("ffs.gud");
     unlink_function("ffs.adb");
@@ -384,13 +393,14 @@ int gadget_set_mode(char m) {
     /* Mode B (PHONEBOX) carries adb: present the generic "rndis,adb" Android ID (as postmarketOS/PinePhone do)
      * so stock udev rules give the user's adb access without extra setup. */
     int with_adb = m == 'B' && adbd_ready();
-    wr("idVendor", m == 'A' && gud_ready() && hm_input_mode() != IN_RESCUE ? "0x1d50" : with_adb ? "0x18d1" : "0x1d6b");
-    wr("idProduct", m == 'A' && gud_ready() && hm_input_mode() != IN_RESCUE ? "0x614d" : with_adb ? "0x4ee4" : "0x0104");
+    wr("idVendor", m == 'A' && gud_ready() && hm_wants_gud() ? "0x1d50" : with_adb ? "0x18d1" : "0x1d6b");
+    wr("idProduct", m == 'A' && gud_ready() && hm_wants_gud() ? "0x614d" : with_adb ? "0x4ee4" : "0x0104");
     if (dhcpd_pid > 0) { kill(dhcpd_pid, SIGTERM); dhcpd_pid = -1; }
     if (m == 'A' && hid_fn) link_function(hid_fn);
     if (m == 'A' && mouse_fn) link_function(mouse_fn);
     if (m == 'A' && kbd_fn) link_function(kbd_fn);
-    if (m == 'A' && gud_ready() && hm_input_mode() != IN_RESCUE) link_function("ffs.gud");
+    if (m == 'A' && cons_fn) link_function(cons_fn);
+    if (m == 'A' && gud_ready() && hm_wants_gud()) link_function("ffs.gud");
     int net = ncm_fn && (m == 'B' || hm_input_mode() == IN_RESCUE); /* RESCUE: USB network to the server too */
     if (net) link_function(ncm_fn);
     if (with_adb) link_function("ffs.adb");
@@ -405,6 +415,7 @@ int gadget_set_mode(char m) {
         }
         ensure_node("hidg", "hidg1", "/dev/hidg1");
         ensure_node("hidg", "hidg2", "/dev/hidg2");
+        if (cons_fn) ensure_node("hidg", "hidg3", "/dev/hidg3");
         snprintf(p, sizeof p, "%s", access("/dev/hidg0", F_OK) == 0 ? "/dev/hidg0" : "(missing)");
         logmsg("usb: HID digitizer on %s", p);
     }

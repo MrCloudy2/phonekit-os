@@ -482,8 +482,12 @@ static void dispatch(struct app *a, char *l, size_t len) {
         data(b, n);
         ok(NULL);
     } else if (!strcmp(c, "mode")) {
-        /* mode | mode <0..3: screen mouse keyboard combo> | mode next | mode menu */
-        if (argc > 1 && !strcmp(argv[1], "next")) hm_mode_step(1);
+        /* mode | mode <0..5 or screen mouse keyboard combo rescue deck> | mode next | mode menu */
+        static const char *const names[IN_MODES] = {"screen", "mouse", "keyboard", "combo", "rescue", "deck"};
+        int named = -1;
+        for (int i = 0; argc > 1 && i < IN_MODES; i++) if (!strcmp(argv[1], names[i])) named = i;
+        if (named >= 0) hm_set_mode(named);
+        else if (argc > 1 && !strcmp(argv[1], "next")) hm_mode_step(1);
         else if (argc > 1 && !strcmp(argv[1], "menu")) hm_menu_toggle();
         else if (argc > 1) hm_set_mode(atoi(argv[1]));
         char b2[256];
@@ -503,6 +507,11 @@ static void dispatch(struct app *a, char *l, size_t len) {
         ok(NULL);
     } else if (!strcmp(c, "phonebox") && argc > 2 && !strcmp(argv[1], "page")) {
         if (pb_page_set(atoi(argv[2])) < 0) err("no such phonebox page"); else ok(NULL);
+    } else if (!strcmp(c, "deck")) {
+        static char b2[4096];
+        int n2 = deck_ctl(argv, argc, l_raw, b2, sizeof b2);
+        data(b2, (size_t)n2);
+        ok(NULL);
     } else if (!strcmp(c, "bt")) {
         static char b2[2048];
         if (argc > 1 && !strcmp(argv[1], "scan")) wd_allow("ctl:bt scan", 20);
@@ -581,7 +590,7 @@ static void dispatch(struct app *a, char *l, size_t len) {
         if (argc > 3 && !strcmp(argv[1], "set")) {
             if (store_set(argv[2], argv[3]) < 0) { err("store write failed"); return; }
         } else if (argc > 2 && !strcmp(argv[1], "unset")) {
-            if (store_set(argv[2], "") < 0) { err("store write failed"); return; }
+            if (store_unset(argv[2]) < 0) { err("store write failed"); return; }
         }
         static char b[8192];
         int n = store_dump(b, sizeof b);

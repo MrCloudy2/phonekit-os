@@ -121,6 +121,7 @@ int store_safe_mode(void);
 int boot_key_held(int code);            /* util.c: is this key down right now (any input device)? */
 int store_get_int(const char *key, int dflt);
 int store_set(const char *key, const char *value);
+int store_unset(const char *key);
 int store_save(void);
 int store_dump(char *buf, size_t len);
 
@@ -169,11 +170,14 @@ void gud_set_workers(int n);
 void gud_set_visible(int v); /* hidden: frames go to a shadow copy, restored on show */
 
 /* hid_modes.c — phone modes (PANEL/SCREEN/MOUSE/KEYBOARD/COMBO), menu, screen ownership */
-enum { IN_TOUCHSCREEN, IN_TRACKPAD, IN_KEYBOARD, IN_COMBO, IN_RESCUE, IN_MODES };
+enum { IN_TOUCHSCREEN, IN_TRACKPAD, IN_KEYBOARD, IN_COMBO, IN_RESCUE, IN_DECK, IN_MODES }; /* stored: append only */
 enum { OWN_PAGE, OWN_GUD, OWN_INPUT, OWN_MENU };
 void hm_init(struct fb *f);
 int hm_owner(void);
 int hm_input_mode(void);
+int hm_wants_gud(void);  /* the GUD monitor belongs in the gadget (not in RESCUE/DECK: no phantom monitor) */
+void hm_kbd_raw(int mods, const unsigned char keys[6]); /* keyboard report: USB + Bluetooth host */
+void hm_consumer(int usage);                            /* media key report (0 = released): USB + Bluetooth */
 int hm_menu_open(void);
 void hm_menu_toggle(void);
 int hm_menu_key(int code);
@@ -184,6 +188,13 @@ int hm_tick(void);
 int hm_touch_frame(void);
 int hm_status(char *b, size_t len);
 int touch_active_px(int *ids, int *xs, int *ys, int max);
+
+/* deck.c — DECK mode: stream-deck style hotkey pad */
+void deck_draw(struct fb *f);
+int deck_touch(struct fb *f, const int *ids, const int *xs, const int *ys, int n);
+void deck_release_all(void);
+int deck_tick(struct fb *f);
+int deck_ctl(char **argv, int argc, const char *raw, char *out, size_t len);
 
 /* sensors.c — sensor hub (CHUB) and autorotate */
 void sensors_set_running(int on);
@@ -244,6 +255,8 @@ int bthid_log(char *out, size_t len);
 int bthid_connected(void);
 const char *bthid_status(void);
 void bthid_key(int mods, int code);
+void bthid_keys(int mods, const unsigned char keys[6]);
+void bthid_consumer(int usage); /* consumer page usage (0xCD play/pause, 0xE9 volume up, ...), 0 = released */
 void bthid_mouse(int buttons, int dx, int dy, int wheel, int pan);
 int ssh_ctl(char **argv, int argc, const char *raw, char *out, size_t len);
 void term_tick(void);                  /* term.c: hand the console to/from a remote (ssh) session */

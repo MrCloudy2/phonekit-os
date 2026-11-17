@@ -145,6 +145,15 @@ int store_set(const char *key, const char *value) {
     return store_save();
 }
 
+/* Removes a key (store_get gives the caller's default again). */
+int store_unset(const char *key) {
+    int i;
+    for (i = 0; i < nkv && strcmp(kv[i].k, key); i++) {}
+    if (i == nkv) return 0;
+    kv[i] = kv[--nkv];
+    return store_save();
+}
+
 int store_save(void) {
     if (region_off < 0) return -1;
     static uint8_t slot[SLOT_SIZE];

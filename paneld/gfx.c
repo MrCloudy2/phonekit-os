@@ -108,7 +108,12 @@ void cv_rrect_stroke(struct canvas *c, int x, int y, int w, int h, int r, float 
         if (j < 0 || j >= c->h) continue;
         for (int i = x; i < x + w; i++) {
             float px = i + 0.5f, py = j + 0.5f;
-            if (px > x + r + t && px < x + w - r - t && py > y + t + 1 && py < y + h - t - 1) { i = x + w - r - (int)t - 2; continue; }
+            if (px > x + r + t && px < x + w - r - t && py > y + t + 1 && py < y + h - t - 1) {
+                /* inside: jump to the right edge, only ever forwards (with a fractional t the target could be
+                 * behind i, which looped forever and starved the watchdog) */
+                int ni = x + w - r - (int)ceilf(t) - 2;
+                if (ni > i) { i = ni; continue; }
+            }
             float o = rr_cov(px, py, (float)x, (float)y, (float)w, (float)h, (float)r);
             float in = rr_cov(px, py, x + t, y + t, w - 2 * t, h - 2 * t, r - t > 0 ? r - t : 0);
             float cov = o - in;
