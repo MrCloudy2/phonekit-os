@@ -183,6 +183,7 @@ void hm_menu_toggle(void);
 int hm_menu_key(int code);
 void hm_mode_step(int d);
 void hm_set_mode(int m);
+void hm_set_phonebox(void); /* PHONEBOX: USB mode B + the panel page */
 void hm_set_rotation(int deg);
 int hm_tick(void);
 int hm_touch_frame(void);

@@ -575,6 +575,8 @@ int hm_status(char *b, size_t len) {
                     mode_name[input_mode], menu_open, settings_open, hm_owner(), buttons, sticky, fb ? fb->rot : 0);
 }
 
+void hm_set_phonebox(void) { if (input_mode == IN_DECK) deck_release_all(); menu_choose(MI_PANEL); }
+
 /* m = input mode (IN_TOUCHSCREEN..IN_COMBO), not a menu index (MI_PANEL is 0 there) */
 void hm_set_mode(int m) { if (m >= 0 && m < IN_MODES) menu_choose(MI_SCREEN + m); }
 
