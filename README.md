@@ -1,12 +1,38 @@
 # PhoneKit
 
-**Turn an old phone into your own hardware toolkit: a desk touch panel, a USB monitor, a keyboard and trackpad,
-a server console, whatever you build. Like [phonebox](https://github.com/ersinkoc/phonebox), but it's an
-operating system, not an app.**
+**Turn an old phone into your own hardware toolkit. Like [phonebox](https://github.com/ersinkoc/phonebox),
+but it's an operating system, not an app.**
 
-phonebox runs as an app on top of full Android. PhoneKit removes Android entirely: the phone boots a trimmed
-Linux kernel and one small native program, `paneld`, which owns the screen, touch, buttons, battery and USB.
-It boots in seconds, idles at a fraction of Android's power draw, and charges the battery only to a safe
+![PhoneKit's PHONEBOX home page: clock, weather, now playing, CPU/GPU/RAM/network](docs/img/phonebox-home.png)
+
+An old phone is a great piece of hardware: a sharp touchscreen, a battery, USB, Bluetooth, Wi-Fi, buttons and
+sensors in a box that fits your hand. PhoneKit drops Android and keeps the hardware, so one phone can be many
+gadgets. Switch between them with the side button, in about two seconds:
+
+- **A desk dashboard for your PC.** Clock, weather, now playing, CPU/GPU/RAM, AI usage quotas, app launchers.
+  It works with the stock phonebox desktop agent, so there's nothing new to install on the PC.
+- **A stream deck.** Big buttons that send hotkeys to OBS, Discord or anything else. Push-to-talk works, and so
+  do media keys, over USB or Bluetooth.
+- **A USB monitor with touch.** It plugs into a Linux PC as a second screen, no driver install.
+- **A keyboard and trackpad** for a TV box, tablet, media PC or another phone, wired or over Bluetooth.
+- **A server crash cart.** A terminal for a server's serial console, or blind typing into a headless machine.
+- **Whatever you build.** Any script, Home Assistant setup or microcontroller can draw on the screen and read
+  touches with [PPJ/1](protocol/PPJ1.md), plain JSON lines over TCP. Or change the C code: it's small, and MIT.
+
+| | |
+|---|---|
+| ![DECK mode: STREAM page with scene, mic, camera, record and live buttons](docs/img/deck.png) | ![PHONEBOX system page: processor, graphics, memory and network charts](docs/img/phonebox-system.png) |
+| **DECK**: a hotkey pad for streaming (MIC and LIVE stay lit) | **PHONEBOX**: your PC's vitals at a glance |
+| ![PHONEBOX AI quotas page: Claude, Codex and Antigravity usage](docs/img/phonebox-ai-quotas.png) | ![PHONEBOX music page: now playing and a 7-day forecast](docs/img/phonebox-music.png) |
+| **PHONEBOX**: AI plan usage and reset times | **PHONEBOX**: media controls and the week's weather |
+| ![KEYBOARD mode: a full keyboard with arrows](docs/img/keyboard.png) | ![The mode menu: PHONEBOX, SCREEN, MOUSE, KEYBOARD, COMBO, RESCUE, DECK, SETTINGS](docs/img/modes-menu.png) |
+| **KEYBOARD**: a USB or Bluetooth keyboard | **One phone, many modes**: hold the side button |
+
+All of these are real screenshots from a Samsung XCover Pro running PhoneKit.
+
+**How:** phonebox runs as an app on top of full Android. PhoneKit removes Android entirely: the phone boots a
+trimmed Linux kernel and one small native program, `paneld`, which owns the screen, touch, buttons, battery and
+USB. It boots in seconds, idles at a fraction of Android's power draw, and charges the battery only to a safe
 40–60 % window, so it can stay plugged in for years.
 
 **Why:** a phone that still works isn't obsolete, just abandoned. Read the [manifesto](MANIFESTO.md).
@@ -18,7 +44,7 @@ It boots in seconds, idles at a fraction of Android's power draw, and charges th
 > Only do this with a phone you no longer need for anything else. There is no guarantee it will work on your
 > phone, see [Who this is for](#who-this-is-for).
 
-<!-- TODO: photo of the XCover Pro on a desk in PANEL mode -->
+<!-- TODO: photo of the XCover Pro on a desk in PHONEBOX mode -->
 
 ## Who this is for
 
