@@ -54,4 +54,27 @@ sources named below. Most of it matches the [Exynos 8895](../exynos8895/quirks.m
   backlight 128), 430 mW dim, 130-150 mW off.
 - Sensors: `CONFIG_SENSORS_SSP_BBD`, the SSP hub on the Broadcom GPS chip, as on the 8895. Expect manual rotation
   only (manual rotation passes test-touch in all four orientations; auto-rotate untested).
-- The ROM kernel has no devtmpfs; the source build keeps it off too (paneld creates its nodes).
+- The ROM kernel has no devtmpfs; the source build keeps it off too (paneld creates its nodes). There is no
+  `/dev/block` either: to read a partition from PhoneKit, `mknod` it from `/sys/class/block/<name>/dev`.
+- The bootloader ignores the boot image's cmdline: options such as `initcall_debug` must be built in
+  (`CONFIG_CMDLINE_EXTEND`). Kernel to paneld takes ~3.2 s on the S9+ (S8: 1.4 s), spread over many probes.
+
+## Wi-Fi: Broadcom BCM4361 B2 over PCIe (bcmdhd 101.16)
+- The driver asks the kernel's firmware loader (`request_firmware`, `DHD_LINUX_STD_FW_API`) for bare names
+  (`bcmdhd_sta.bin_b2`, `nvram.txt_r02a_b2`, `bcmdhd_clm.blob`), so the files go to `/lib/firmware`: put them in
+  `devices/<dev>/prebuilt/firmware/lib/firmware/` (from the ROM's `/vendor/firmware`). The 8895's driver read
+  `/vendor/etc/wifi` directly.
+- It also asks for `logstrs.bin`, which Samsung doesn't ship. With `CONFIG_FW_LOADER_USER_HELPER_FALLBACK` every
+  power-up then waits 25 s for a userspace helper, and paneld's scan timeout killed `ifconfig` in the middle
+  (`request_irq failed with -4`). The device's kernel fragment turns the fallback off.
+- The nvram is chosen from the module's OTP (Semco `91 33` -> `r02a`); the MAC comes from the chip's OTP.
+- WPA2-PSK, DHCP, DNS and tethering work; ~12 mW when connected and idle.
+
+## Bluetooth: Broadcom BCM4361 B2 on a UART
+- `ttySAC1` (`10840000.uart`), power through `bcm43xx.c`'s rfkill `bcm43xx Bluetooth`, patchram
+  `bcm4361B2_semco.hcd` / `_murata.hcd` from `/vendor/firmware` (the Wi-Fi nvram tells which module you have).
+- paneld does libbt-vendor's bring-up itself (`paneld/bt_bcm.c`, `hw.c` `.bt = HW_BT_BCM_UART`): reset at 115200,
+  3 Mbaud, patchram, reset, 3 Mbaud, Write BD_ADDR from `/efs/bluetooth/bt_addr` (a copy in the image, from
+  `prebuilt/firmware/efs-root/`), then the vhci bridge the XCover Pro uses (`CONFIG_BT_HCIVHCI`). Up in ~0.8 s.
+- Without the address file the chip uses Broadcom's shared default `43:61:B2:00:1F:AC`.
+- The 8895 (Galaxy S8) has a BCM4361 as well; the same path should work there with its own tty and `.hcd`.

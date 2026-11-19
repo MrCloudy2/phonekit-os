@@ -1,5 +1,5 @@
 # PhoneKit device record: Samsung Galaxy S9+ (Exynos). Third PhoneKit phone: pptest 92 pass / 0 fail / 1 skip on
-# 2026-11-19 (source-built LineageOS 24.0 kernel). Open: colours and touch by eye, Wi-Fi, auto-rotate, a long soak.
+# 2026-11-19 (source-built LineageOS 24.0 kernel). Open: auto-rotate (blocked, as on the S8), a long soak, boot time.
 # Values were read on 2026-11-19 from the test phone running LineageOS 23.2 (adb root): getprop, /proc/config.gz,
 # scripts/probe.sh, getevent, blockdev. The boot image layout comes from its RECOVERY dump (sha256 fc9ad790…a879)
 # read with scripts/samsung-bootimg.py. Public sources are named where used.
@@ -62,11 +62,11 @@ display:
   stride: 5760
   virtual: [1440, 5920]      # double buffer via pan
   backlight: /sys/class/backlight/panel (max 44800)
-  color_order_verified: false  # expected BGR (LineageOS TARGET_RECOVERY_PIXEL_FORMAT ABGR_8888): hw.c fb_swap_rb = 1; by eye still to do
+  color_order_verified: true   # 2026-11-19 by eye (owner): PHONEBOX labels in their colours with hw.c fb_swap_rb = 1 (BGR, as LineageOS's ABGR_8888 said)
   verified: true               # 2026-11-19: first boot showed the PHONEBOX dashboard (screenshot); test-display 5/5
 
 input:
-  touch: { name: sec_touchscreen, node: event0, max_x: 4095, max_y: 4095, slots: 10, verified: true }   # getevent -lp; test-touch 10/10 (2026-11-19)
+  touch: { name: sec_touchscreen, node: event0, max_x: 4095, max_y: 4095, slots: 10, verified: true }   # getevent -lp; test-touch 10/10; by eye in SCREEN mode (owner, 2026-11-19)
   keys: { name: gpio_keys, node: event5, codes: [VOLUMEDOWN, VOLUMEUP, POWER, 0x2bf], verified: true }   # 0x2bf = Bixby (KEY_WINK in the DTS); paneld 'keys power volup voldown bixby', test-keys 8/8
   key_roles: "Bixby = mode key, no page key (hold Vol Up/Down for pages), as on the S8"
   # LineageOS 23.2 event order: event0 sec_touchscreen, event1 grip_sensor, event2 ssp_context, event3 hrm_sensor,
@@ -95,8 +95,21 @@ sensors:
   ssp_sensors: accelerometer, barometer, grip, gyro, hrm, light, magnetic, proximity, thermistor (sysfs ssp_sensor under LineageOS)
 
 wifi:
-  chip: Broadcom BCM4361 rev B2 (bcmdhd over PCIe; firmware names *_b2)
-  firmware: "/vendor/firmware: bcmdhd_sta.bin_b2, nvram.txt_r02a_b2 / r02b_b2 / murata_r041_b2, bcmdhd_clm.blob. Which nvram the driver picks: to check"
+  chip: Broadcom BCM4361 rev B2 over PCIe (bcmdhd 101.16.63, built in); Semco module (OTP VID 91 33 -> nvram r02a)
+  firmware: "/vendor/firmware on the LineageOS 24.0 VENDOR partition (mounted read-only from PhoneKit, 2026-11-19) into prebuilt/firmware/lib/firmware: bcmdhd_sta.bin_b0/_b2, nvram.txt_r02a_b2/_r02b_b2/_murata_r041_b2, bcmdhd_clm.blob. The driver picks bcmdhd_sta.bin_b2 + nvram.txt_r02a_b2 and loads them with request_firmware() (DHD_LINUX_STD_FW_API), so they go to /lib/firmware, not /vendor/etc/wifi as on the S8. CLM 201112"
+  mac: "the chip's OTP holds the phone's own MAC (6c:c7:ec:..); a copy of /efs/wifi/.mac.info is in the image too (prebuilt/firmware/efs-root). Before the first interface-up wlan0 shows a 00:90:4c placeholder"
+  status: "2026-11-19: joins WPA2-PSK (CCMP) on 2.4 GHz, DHCP, DNS (after the /etc/resolv.conf link), 3/3 pings to 1.1.1.1 at ~30 ms; 130 Mbit/s at -74 dBm; power save on; scan in 4 s"
+  power: "~12 mW connected and idle (screen off: 160 vs 148 mW); ~90 mW more for some seconds after a (re)join"
+  tethering: "WI-FI MODEM path verified 2026-11-19: ip_forward + MASQUERADE out of wlan0, the PC fetched a page through the phone (HTTP 200) with its own default route untouched"
+  quirks: "logstrs.bin (not shipped) made every power-up wait 25 s for the firmware user helper, and paneld's 25 s scan timeout then killed ifconfig mid power-up (request_irq -4): kernel/phonepanel.cfg turns CONFIG_FW_LOADER_USER_HELPER_FALLBACK off"
+
+bluetooth:
+  chip: Broadcom BCM4361 B2 on UART 10840000.uart (/dev/ttySAC1, 204:65; Samsung's init chowns it to bluetooth), power through bcm43xx.c's rfkill "bcm43xx Bluetooth"
+  firmware: "bcm4361B2_semco.hcd (108067 B, 439 HCI records) from /vendor/firmware into prebuilt/firmware/lib/firmware; libbt-vendor picks _semco/_murata by module"
+  bring_up: "paneld/bt_bcm.c (hw.c .bt = HW_BT_BCM_UART): rfkill on, 115200 8N1 RTS/CTS, HCI reset, 3 Mbaud (0xfc18), Download Minidriver (0xfc2e), patchram, back to 115200, reset, 3 Mbaud, Write BD_ADDR (0xfc01) from /efs/bluetooth/bt_addr. 785 ms (10.5 s when the patch went at 115200). Then the XCover's vhci bridge; kernel/phonepanel.cfg adds CONFIG_BT_HCIVHCI"
+  address: "the phone's own C0:BD:C8:.. from a copy of /efs/bluetooth/bt_addr (prebuilt/firmware/efs-root); without it the chip answers with Broadcom's shared default 43:61:B2:00:1F:AC"
+  status: "2026-11-19: hci0, inquiry, discoverable as PhoneKit; the owner's Android phone paired it as keyboard + mouse; typing and the pointer work (owner, by eye). PhoneKit sends US key positions: with a QWERTZ layout on the host '+' came out as '*' until the host's physical keyboard layout was set to English (US)"
+  power: "~40 mW with a connected host (screen off: 319 vs 279 mW, one measurement)"
 
 quirks:
   - "the ROM rewrites RECOVERY at boot (persist.vendor.recovery_update=true): set it to false before flashing PhoneKit"
@@ -106,6 +119,10 @@ quirks:
   - "USB config must be named 'Conf 1': configfs.c is_symboliclink_change_mode() treats other names as a GSI image, and the first mode switch left only the ACM ports (dmesg 'ADB Only mode for recovery or VTS test'). hw.c usb_config_name"
   - "HP_GOV caps the big cluster at 1794 MHz with 4 big cores online; paneld's restore reads back 1794000, not cpuinfo_max 2314000"
   - "virt-manager (SPICE USB auto-redirect) on the test PC grabbed the phone at every re-enumeration (docs/recovery.md)"
+  - "the bootloader ignores the boot image's cmdline (initcall_debug never reached /proc/cmdline): kernel options have to be built in (CONFIG_CMDLINE_EXTEND)"
+  - "RESCUE's on-screen keyboard cuts two labels in portrait at 1440 px ('Dow', 'Righ')"
+  - "RECOVERY is 68149248 B, not a multiple of 64 KiB: phone.sh now keeps the settings store with 4 KiB blocks (it was overwritten on every deploy)"
+  - "PhoneKit has no /dev/block: to read a partition from PhoneKit, mknod it from /sys/class/block/<name>/dev (VENDOR = sda19 = 259:3)"
 
 milestones:
   M0: confirmed 2026-11-19   # prebuilt LineageOS 23.2 kernel: PHONEBOX dashboard on the first boot
@@ -114,7 +131,12 @@ milestones:
   M4: confirmed 2026-11-19   # test-power 12/12
   M5: confirmed 2026-11-19   # test-usb 11/11 (after usb_config_name "Conf 1")
   M6b: confirmed 2026-11-19  # MOUSE, KEYBOARD, COMBO (test-input-modes 16/16)
-  M6: partial 2026-11-19     # SCREEN: GUD state + frames and HID touch pass test-usb; not yet seen by eye on a desktop
+  M6: confirmed 2026-11-19   # SCREEN: KDE shows a USB-1 monitor, desktop visible on the phone and touch works (owner, by eye); test-usb 11/11
   M6e: partial 2026-11-19    # manual rotation in all 4 orientations; auto-rotate untested (SSP on the GPS chip, like the S8)
   M7: confirmed 2026-11-19   # test-panel 21/21 (PPJ/1 over the USB network)
   M12b: confirmed 2026-11-19 # test-phonebox 9/9 with the stock agent over USB
+  M10: confirmed 2026-11-19  # Wi-Fi: WPA2-PSK, DHCP, DNS, internet; ~12 mW idle
+  M10b: partial 2026-11-19   # tethering over USB: PC fetched a page through the phone (Linux)
+  M10c: partial 2026-11-19   # Bluetooth: paired with an Android phone as keyboard + mouse, typing and pointer work
+  M6h: confirmed 2026-11-19  # DECK: 3x4 portrait grid, button 1 -> F13 on the PC (press + release)
+  M6g: partial 2026-11-19    # RESCUE: 119x55 console, 16/256/truecolour, on-screen keys reach the server

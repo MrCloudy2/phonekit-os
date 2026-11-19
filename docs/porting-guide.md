@@ -114,6 +114,10 @@ Typical device-specific things:
 | USB gadget layer | `failed to start pp: -22` | Galaxy S8: Samsung composite (`android0/functions` + `enable`): `hw.c` `.usb = HW_USB_SAMSUNG_COMPOSITE` |
 | Sensor hub | rotation never changes | Galaxy S8: hub runs on the GPS chip behind Android's `lhd` daemon, so manual rotation only |
 | USB config name | first mode switch drops HID/network/adb, `ADB Only mode` in dmesg | Galaxy S9+: Exynos 9810 composite treats any config name but `Conf 1` as a GSI image: `hw.c` `.usb_config_name = "Conf 1"` |
+| Wi-Fi firmware via `request_firmware` | `Direct firmware load for bcmdhd_sta.bin_b2 failed with error -2` | Galaxy S9+: files in `prebuilt/firmware/lib/firmware/` (-> `/lib/firmware`), not `wifi/` |
+| A missing optional firmware file stalls a driver | 25 s pause at `Falling back to user helper` | Galaxy S9+: `# CONFIG_FW_LOADER_USER_HELPER_FALLBACK is not set` in the kernel fragment |
+| Broadcom Bluetooth on a UART | no `scsc_h4`, an rfkill `bcm43xx Bluetooth`, a `*.hcd` in the ROM's firmware | Galaxy S9+: `hw.c` `.bt = HW_BT_BCM_UART`, `.bt_uart`, `.bt_rfkill`, `.bt_fw`; `CONFIG_BT_HCIVHCI` |
+| Shared default radio addresses | Bluetooth `43:61:B2:00:1F:AC`, Wi-Fi `00:90:4c:..` | copy the ROM's `/efs/bluetooth/bt_addr` (and `/efs/wifi/.mac.info`) into `prebuilt/firmware/efs-root/` (-> `/efs` in the image) |
 | Newer kernel than your clang expects | `-Werror` stops the build on diagnostics the tree's own clang didn't have | Galaxy S9+: `KERNEL_KCFLAGS` in `device.mk` (several flags; `KERNEL_MAKE_FLAGS` splits on spaces) |
 
 ### The hardware layer: `devices/<dev>/hw.c`

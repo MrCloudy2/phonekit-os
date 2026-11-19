@@ -14,4 +14,5 @@ const struct phone_hw phone = {
     .usb = HW_USB_CONFIGFS,             /* HW_USB_SAMSUNG_COMPOSITE if UDC alone gives -EINVAL (see porting guide) */
     .sensor_hub_on = "",                /* sysfs attribute that powers a sensor co-processor, if the phone has one */
     .usb_config_name = "phonepanel",    /* "Conf 1" on Exynos 9810 composite kernels (see socs/exynos9810/quirks.md) */
+    .bt = HW_BT_SCSC,                   /* HW_BT_BCM_UART + .bt_uart/.bt_rfkill/.bt_fw for a Broadcom UART chip */
 };

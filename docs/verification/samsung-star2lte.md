@@ -1,8 +1,9 @@
 # Samsung Galaxy S9+ (SM-G965F, Exynos 9810): port verification
 
 Status: 🟨 2026-11-19. Third PhoneKit device, ported in one session. On the LineageOS 24.0 kernel built from source:
-**pptest 92 pass, 0 fail, 1 skip** (no top key). Open: colours and touch checked by eye, Wi-Fi, SCREEN seen on a
-desktop, auto-rotate, a long soak, boot time (paneld starts 3.2 s after the kernel; the S8 does it in 1.4 s).
+**pptest 92 pass, 0 fail, 1 skip** (no top key). Checked by hand after that: colours, touch and SCREEN by eye,
+Wi-Fi, tethering, Bluetooth (keyboard + mouse to an Android phone), DECK, RESCUE. Open: auto-rotate (blocked as on
+the S8), a long soak, boot time (paneld starts 3.2 s after the kernel; the S8 does it in 1.4 s).
 Facts with sources: `devices/samsung-star2lte/device.yaml`; chip-wide findings: `socs/exynos9810/quirks.md`.
 Latest `scripts/pptest.py` report: `samsung-star2lte-report.md`.
 
@@ -33,4 +34,26 @@ Latest `scripts/pptest.py` report: `samsung-star2lte-report.md`.
 | Power | ~800 mW active (test pattern, brightness 128), ~435 mW dim, 125-150 mW off (panel blanked, CPUs capped) |
 | Charge limiter | `batt_slate_mode`, as on the S8 (the phone then runs from the battery) |
 | USB | mode B: 3 ACM + RNDIS + adb (`18d1:4ee4`); mode A: 4 HID functions + GUD; switches back and forth cleanly |
-| Not yet done | colours by eye (`fb_swap_rb = 1` is expected from LineageOS's `ABGR_8888`), Wi-Fi (BCM4361 B2 firmware in `/vendor/firmware`), auto-rotate, 24 h soak, boot-time trim |
+| Colours, touch, SCREEN | by eye (owner): PHONEBOX colours right with `fb_swap_rb = 1`; KDE shows a `USB-1` monitor, the desktop is on the phone and touch works |
+
+## Features checked by hand (2026-11-19)
+| Feature | Result |
+|---|---|
+| Wi-Fi (M10) | BCM4361 B2: firmware from the ROM's `/vendor/firmware` into `/lib/firmware`; WPA2-PSK on 2.4 GHz, DHCP, DNS, 3/3 pings; 130 Mbit/s at −74 dBm; ~12 mW connected and idle |
+| Tethering (M10b) | NAT out of `wlan0`; the PC fetched a page through the phone (HTTP 200) while its own default route stayed on Ethernet |
+| Bluetooth (M10c) | new Broadcom UART path (`paneld/bt_bcm.c`): up in 0.8 s with the phone's own address; paired with the owner's Android phone; typing and the pointer work; ~40 mW connected |
+| DECK (M6h) | 3×4 portrait grid; button 1 reaches the PC as F13 (press + release) |
+| RESCUE (M6g) | 119×55 console, 16/256/truecolour, on-screen keys reach the server over the serial port; two key labels cut in portrait ("Dow", "Righ") |
+| Rotation (M6e) | manual only: `[SSPBBD]: ssp_down == true`, the hub needs Android's `lhd`, as on the S8 |
+| pptest after these changes | 92 pass, 0 fail, 1 skip, no regressions. One earlier full run missed "phone touch arrives on the host at the right position" (no host event in 3 tries); the suite alone passed twice right after, and the next full run passed: intermittent, host side, to watch |
+| Boot time | kernel → paneld 3.2 s; no single slow step in dmesg. The bootloader ignores the image cmdline, so `initcall_debug` needs `CONFIG_CMDLINE_EXTEND` (next step) |
+
+## More shared fixes from these checks
+| Problem | Fix |
+|---|---|
+| Wi-Fi firmware is loaded with `request_firmware` (bare names) | `initramfs.spec`: optional `prebuilt/firmware/lib/` → `/lib` |
+| `logstrs.bin` missing: 25 s user-helper wait, scan timeout killed `ifconfig` | S9+ kernel fragment: `CONFIG_FW_LOADER_USER_HELPER_FALLBACK` off |
+| Programs on the phone couldn't resolve names (no `/etc/resolv.conf` on any phone) | `initramfs.spec`: `/etc/resolv.conf` → `/run/resolv.conf` |
+| `phone.sh flash` overwrote the settings store when the partition isn't a multiple of 64 KiB | 4 KiB blocks then; the S8 and XCover keep the same 64 KiB offsets |
+| Broadcom UART Bluetooth | `hw.c` `.bt = HW_BT_BCM_UART` + `.bt_uart/.bt_rfkill/.bt_fw` (default SCSC, so the XCover is unchanged); `CONFIG_BT_HCIVHCI` |
+| Radios on shared default addresses | optional `prebuilt/firmware/efs-root/` → `/efs` with copies of `bluetooth/bt_addr` and `wifi/.mac.info` |

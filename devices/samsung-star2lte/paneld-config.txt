@@ -7,6 +7,7 @@ page_key (none: hold Vol Up/Down for pages)
 usb samsung-composite (android0 functions + enable)
 sensor_hub_on (none: the kernel powers the hub)
 usb_config_name Conf 1
+bluetooth broadcom-uart /dev/ttySAC1, rfkill "bcm43xx Bluetooth", patchram /lib/firmware/bcm4361B2_semco.hcd
 hint_status_1 BIXBY: NEXT MODE  HOLD: MENU
 hint_status_2 VOL: BRIGHTNESS  HOLD VOL: PAGES
 hint_trackpad BIXBY: NEXT MODE   HOLD BIXBY: MENU
