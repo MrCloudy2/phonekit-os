@@ -27,7 +27,11 @@ later under PhoneKit) and prints a `device.yaml` draft: `adb push scripts/probe.
 ```bash
 cp -r devices/_template devices/<vendor>-<codename>
 ```
-Fill in `device.mk` (partition, flash tool, size) and as much of `device.yaml` as you know. If your SoC has a
+Fill in the three files, each with its own job:
+- `device.mk`: how to build and flash (partition, flash tool, size).
+- `hw.c`: how paneld drives the hardware (colour order, charging attribute, mode/page keys, USB gadget type, sensor
+  hub). Leave the template values and fix them as you find out; see "The hardware layer" under Stage 5.
+- `device.yaml`: as many facts as you know, with their sources. If your SoC has a
 folder in [`socs/`](../socs/), read its `quirks.md`: most of what you'll hit is there already. If not, create
 one (`socs/<soc>/quirks.md`), because the next person with that chip will thank you.
 
@@ -51,7 +55,7 @@ Flash to **recovery** (`make flash`, or `make deploy` from a rooted ROM) and boo
 Expected: a test pattern with a red border on all four edges and a clock, and touch draws under your finger.
 - **Black screen, backlight on**: the display path isn't initialised. Get logs (recovery.md), look for the
   fbdev/DRM node. Today paneld drives fbdev (`/dev/fb0`); a DRM/KMS backend is still to come (M3 notes).
-- **Wrong colours**: `FB_SWAP_RB := 1`.
+- **Wrong colours**: `.fb_swap_rb = 1` in `devices/<dev>/hw.c`.
 - **Back in the ROM's recovery after one boot**: the ROM restores recovery; see recovery.md.
 - **Logo forever**: that kernel/ramdisk combo doesn't boot. Check the header/offsets and the AVB footer.
 
@@ -95,21 +99,34 @@ CONTRIBUTING.md → Tests).
 Typical device-specific things:
 | Area | Where it shows up | XCover Pro example |
 |---|---|---|
-| Colour order | test-display | DECON hard-codes ABGR → `FB_SWAP_RB` |
+| Colour order | test-display | DECON hard-codes ABGR → `hw.c` `fb_swap_rb` |
 | Wake from blank | screen black after long off | DECON needs `FBIOPUT_VSCREENINFO` after unblank |
 | Touch node / max points | test-touch | `sec_touchscreen`, 10 slots |
 | Buttons | test-keys | Vol Up/Down, Power, XCover key, top key |
-| Charger control | test-power | `/sys/class/power_supply/battery/charging_enabled` |
+| Charger control | test-power | `hw.c` `charge_ctl`: `charging_enabled` (S8: `batt_slate_mode`, inverted) |
 | Rotation sensor | Settings → Rotation AUTO | CHUB sensor hub, `device_orientation` |
 | Network gadget | PANEL mode ping | RNDIS works, NCM doesn't transmit |
 | `/dev` without devtmpfs | Wi-Fi never joins (`TEMP-DISABLED`) | Galaxy S8's TWRP kernel: no devtmpfs, so no `/dev/urandom` for wpa_supplicant; paneld now creates the memory nodes itself |
-| USB gadget layer | `failed to start pp: -22` | Galaxy S8: Samsung composite (`android0/functions` + `enable`), handled by paneld |
+| USB gadget layer | `failed to start pp: -22` | Galaxy S8: Samsung composite (`android0/functions` + `enable`): `hw.c` `.usb = HW_USB_SAMSUNG_COMPOSITE` |
 | Sensor hub | rotation never changes | Galaxy S8: hub runs on the GPS chip behind Android's `lhd` daemon, so manual rotation only |
 
-Some of these paths are still hard-coded in paneld (`paneld/sensors.c`, `paneld/power.c`), because there has only been one
-device so far. When yours differs, move the value into `device.mk` as a `-D` define (see how `FB_SWAP_RB`
-reaches `fb.c` through the Makefile) instead of adding `#ifdef <your phone>`. That way the next port stays
-data, not code.
+### The hardware layer: `devices/<dev>/hw.c`
+Everything paneld does differently per phone is one table, `struct phone_hw` (fields and meanings in
+`paneld/hw.h`). Copy `devices/_template/hw.c`, fill it in, and list every field explicitly. Each part of the
+device folder has its own job:
+- `device.mk`: how to build and flash the phone (kernel, partition, flash command).
+- `hw.c`: how paneld drives the hardware (colour order, charging attribute, mode/page keys and labels, USB gadget
+  type, sensor hub power).
+- `device.yaml`: facts and their sources.
+
+When your phone needs something paneld can't express yet:
+1. Add a field to `struct phone_hw`, with a value in `HW_DEFAULTS` that keeps the old behaviour. Every other phone
+   is then unchanged without anyone touching its file.
+2. Set the field in your `hw.c`, and use it in shared code through `phone.<field>`. Never write `#ifdef <your phone>`,
+   and never guess the phone type at runtime ("this sysfs file exists, so it must be ...").
+3. Run `make device=<dev> config-update` for each phone and commit `devices/*/paneld-config.txt`. That file is what
+   paneld does on the phone, and CI fails when it changes without the commit. A change for one phone should only
+   change that phone's file.
 
 ## Stage 6 (optional): Kernel from source
 Needed to trim boot time or to enable gadget functions the ROM's kernel lacks (`CONFIG_USB_CONFIGFS_F_HID`
@@ -124,5 +141,12 @@ for MOUSE/KEYBOARD/SCREEN touch, `CONFIG_USB_CONFIGFS_MASS_STORAGE`).
 - `scripts/devicedb.py check` validates your record; `scripts/devicedb.py table` refreshes `docs/devices.md` (CI checks both).
 - Fill in `device.yaml` with every verified fact (`verified: true` only when you tested it).
 - Add `docs/verification/<device>.md` with what you tested, or extend the table in the README.
+- `make device=<dev> config-update` writes `devices/<dev>/paneld-config.txt`, which shows what paneld does on your
+  phone. CI compares it on every change. Check it reads right, then commit it.
+- After a verified `scripts/pptest.py --device <dev>` run, create your phone's baseline with
+  `scripts/ppregress.py <dev> docs/verification/<dev>-report.md --update`. From then on, nobody's change can quietly
+  break what your phone passes.
+- `make check-all` with every phone you have plugged in. Shared code you touched must not regress the others.
+  Paste `out/check-all.md` into the PR.
 - Open a pull request; see [CONTRIBUTING.md](../CONTRIBUTING.md). Partial ports (say, display and touch only)
   are welcome. Mark how far you got.

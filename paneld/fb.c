@@ -162,12 +162,11 @@ int fb_open(struct fb *f, const char *path) {
         logmsg("fb: get info: %s", strerror(errno));
         return -1;
     }
-#if PP_FB_SWAP_RB
-    /* Device quirk: the panel shows the framebuffer as BGR although fbdev reports RGB
-     * (XCover Pro / DECON: verified by eye with `ppctl colortest`). */
-    { struct fb_bitfield t = f->var.red; f->var.red = f->var.blue; f->var.blue = t; }
-    logmsg("fb: red/blue swapped (device quirk)");
-#endif
+    if (phone.fb_swap_rb) {
+        /* the panel shows the framebuffer as BGR although fbdev reports RGB (hw.c, checked with `ppctl colortest`) */
+        struct fb_bitfield t = f->var.red; f->var.red = f->var.blue; f->var.blue = t;
+        logmsg("fb: red/blue swapped (device quirk)");
+    }
     f->pw = f->var.xres; f->ph = f->var.yres; f->bpp = f->var.bits_per_pixel;
     fb_set_rotation(f, 0);
     f->stride = f->fix.line_length ? (int)f->fix.line_length : f->pw * f->bpp / 8;

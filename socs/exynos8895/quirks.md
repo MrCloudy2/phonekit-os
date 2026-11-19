@@ -17,7 +17,7 @@ Nothing here has been tested under PhoneKit yet. These notes come from the TWRP 
 
 ## Display: Samsung DECON (fbdev), expected
 - The kernel has the DECON fbdev driver (`decon_fb_*`, `decon_pan_display`), like the 9611.
-- **Colour order: BGR, same as the 9611** (verified on the S8, 2026-11-18): set `FB_SWAP_RB := 1`.
+- **Colour order: BGR, same as the 9611** (verified on the S8, 2026-11-18): set `.fb_swap_rb = 1` in `hw.c`.
 - `/dev/fb0` 32 bpp, stride 5760, virtual 1440×5920 (double buffer via pan). Backlight `/sys/class/backlight/panel`,
   **max 36600** (the 9611 XCover Pro: 306). paneld scales its brightness to `max_brightness`, so nothing to configure.
 - Black-after-wake quirk: still to check (blank/unblank).

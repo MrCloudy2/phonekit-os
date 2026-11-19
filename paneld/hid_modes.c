@@ -169,7 +169,9 @@ static void draw_trackpad(void) {
     fb_text(fb, 60, 80, 6, "MOUSE", fb_color(fb, 210, 215, 230), bg);
     fb_text(fb, 60, 160, 3, "1 FINGER MOVE   TAP CLICK   2 FINGERS SCROLL", fg, bg);
     fb_text(fb, 60, 200, 3, "2-FINGER TAP RIGHT   3-FINGER TAP MIDDLE", fg, bg);
-    fb_text(fb, 60, 240, 3, PP_MODE_KEY_LABEL ": NEXT MODE   HOLD " PP_MODE_KEY_LABEL ": MENU", fg, bg);
+    char hint[64];
+    hw_hint_trackpad(hint, sizeof hint);
+    fb_text(fb, 60, 240, 3, hint, fg, bg);
     int bz = fb->h - BTN_ZONE_H;
     fb_fill(fb, 0, bz, fb->w, 4, line);
     fb_fill(fb, fb->w / 2 - 2, bz, 4, BTN_ZONE_H, line);
@@ -528,21 +530,21 @@ void hm_menu_toggle(void) {
     redraw();
 }
 
-/* Keys while the menu is open: vol/top = move, xcover/bixby/power = select. Returns 1 if consumed. */
+/* Keys while the menu is open: vol/page key = move, mode key/power = select (hw.c). Returns 1 if consumed. */
 int hm_menu_key(int code) {
     if (settings_open && netui_active()) return netui_key(code);
     if (settings_open) {
-        if (code == KEY_VOLUMEUP || code == KEY_MACRO17) set_sel = (set_sel + SET_N - 1) % SET_N;
+        if (code == KEY_VOLUMEUP || hw_is_page_key(code)) set_sel = (set_sel + SET_N - 1) % SET_N;
         else if (code == KEY_VOLUMEDOWN) set_sel = (set_sel + 1) % SET_N;
-        else if (code == KEY_XCOVER || code == KEY_BIXBY || code == KEY_POWER) { set_step(set_sel, +1); return 1; }
+        else if (hw_is_mode_key(code) || code == KEY_POWER) { set_step(set_sel, +1); return 1; }
         else return 0;
         draw_settings(); fb_present(fb);
         return 1;
     }
     if (!menu_open) return 0;
-    if (code == KEY_VOLUMEUP || code == KEY_MACRO17) menu_sel = (menu_sel + MENU_N - 1) % MENU_N;
+    if (code == KEY_VOLUMEUP || hw_is_page_key(code)) menu_sel = (menu_sel + MENU_N - 1) % MENU_N;
     else if (code == KEY_VOLUMEDOWN) menu_sel = (menu_sel + 1) % MENU_N;
-    else if (code == KEY_XCOVER || code == KEY_BIXBY || code == KEY_POWER) { menu_choose(menu_sel); return 1; }
+    else if (hw_is_mode_key(code) || code == KEY_POWER) { menu_choose(menu_sel); return 1; }
     else return 0;
     draw_menu();
     fb_present(fb);

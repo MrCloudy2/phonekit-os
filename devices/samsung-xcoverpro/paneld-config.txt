@@ -1,0 +1,18 @@
+# paneld behaviour on this phone: PANELD_PRINT_CONFIG=1 paneld (devices/<dev>/hw.c + shared defaults)
+device samsung-xcoverpro
+fb_swap_rb 1
+charging /sys/class/power_supply/battery/charging_enabled, write 1 to charge
+mode_key 252 XCOVER
+page_key 672 TOP
+usb configfs (UDC)
+sensor_hub_on /sys/devices/platform/11980000.contexthub/poweron
+hint_status_1 XCOVER: NEXT MODE  HOLD: MENU
+hint_status_2 TOP: PAGES  VOL: BRIGHTNESS
+hint_trackpad XCOVER: NEXT MODE   HOLD XCOVER: MENU
+# default key bindings
+power    short=screen_toggle  long=(hold 3 s: reboot)
+volup    short=bright_up      long=page_prev
+voldown  short=bright_down    long=page_next
+xcover   short=mode_next      long=menu
+bixby    short=mode_next      long=menu
+top      short=page_next      long=page_prev

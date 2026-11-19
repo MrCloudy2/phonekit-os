@@ -1,5 +1,5 @@
 # Build settings for the Samsung Galaxy S8 (SM-G950F/FD, exynos8895). Port in progress: nothing here has
-# booted yet. Human-readable facts and their sources live in device.yaml.
+# booted yet. Human-readable facts and their sources live in device.yaml; how paneld drives the hardware in hw.c.
 # Only the Exynos model. The Snapdragon S8 (SM-G950U/U1/W) can't unlock its bootloader.
 
 ARCH            := arm64
@@ -19,20 +19,6 @@ PREBUILT_FROM ?= /path/to/twrp-3.7.0_9-0-dreamlte.img
 
 # Launched on Android 7 with Samsung's own signing, no AVB: TWRP's image has no footer.
 AVB_FOOTER := 0
-
-# The panel shows the framebuffer as BGR, like the Exynos 9611 DECON. Verified by eye on the first boot
-# (2026-11-18): test-pattern bar 2 (yellow) showed light blue and bar 3 (cyan) showed yellow.
-FB_SWAP_RB := 1
-
-# No battery/charging_enabled on this kernel. batt_slate_mode=1 stops charging (verified in TWRP 2026-11-18:
-# status Discharging, charge_type N/A; 0 resumes Fast). The phone then runs from the battery, so the limiter
-# cycles it 60 -> 40 -> 60 % instead of holding it.
-CHARGE_CTL        := batt_slate_mode
-CHARGE_CTL_INVERT := 1
-
-# Side keys: Bixby (0x2bf) is the mode key (short: next mode, long: menu); no page key, so hold Vol Up/Down.
-MODE_KEY_LABEL := BIXBY
-PAGE_KEY_LABEL :=
 
 # Download mode: phone off, hold Vol Down + Bixby + Power.
 FLASH_CMD = heimdall flash --$(TARGET_PARTITION) $(1) --no-reboot

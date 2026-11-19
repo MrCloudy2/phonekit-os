@@ -30,7 +30,8 @@ If PhoneKit starts but a setting makes it unusable (wrong USB mode, a rotation t
 | Stuck on the boot logo | Kernel hangs early (often after a config trim) | Forced reset (Samsung: Vol Down + Power ~10 s), straight into download/fastboot mode, flash the known-good recovery |
 | Bootloops into recovery even after forced reset | Same, the bootloader keeps retrying recovery | Only download/fastboot mode helps: flash known-good |
 | Backlight on, picture black | Display not initialised, or wrong pan/blank handling | `make logs` from the ROM; check the device quirks in `socs/` |
-| Colours wrong (blue looks brown) | Panel byte order ≠ what fbdev reports | Set `FB_SWAP_RB := 1` in `device.mk` |
+| Colours wrong (blue looks brown) | Panel byte order ≠ what fbdev reports | Set `.fb_swap_rb = 1` in `devices/<dev>/hw.c` |
+| Phone enumerates (`lsusb`) but no `/dev/ttyACM*`, no adb | A VM manager on the PC (virt-manager/SPICE USB auto-redirect) grabbed it: all interfaces show `driver=usbfs` | Un-redirect it in the VM console (Virtual Machine → Redirect USB device), turn auto-redirect off, replug |
 | paneld frozen | Usually the watchdog reboots to the ROM within 15 s; else forced reset | `make logs` right away: the next boot overwrites `last_kmsg` |
 | "dm-verity"/"AVB" error, refuses to boot | Image size/footer mismatch, or a locked bootloader | Image must be exactly partition-sized with a footer (`AVB_FOOTER := 1`), bootloader must be unlocked |
 

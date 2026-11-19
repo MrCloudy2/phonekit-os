@@ -462,9 +462,9 @@ int netui_tick(void) {
     return 1;
 }
 
-/* Side keys: vol up/down do nothing here yet; xcover/power go back. */
+/* Side keys: vol up/down do nothing here yet; the mode key (hw.c) and power go back. */
 int netui_key(int code) {
     if (screen == NET_NONE) return 0;
-    if (code == 0xfc || code == KEY_POWER) { on_tap(H_BACK); return 1; }
+    if (hw_is_mode_key(code) || code == KEY_POWER) { on_tap(H_BACK); return 1; }
     return 0;
 }

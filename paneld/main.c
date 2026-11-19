@@ -77,6 +77,7 @@ static int have_touch(const struct app *a) {
 }
 
 int main(void) {
+    if (getpid() != 1 && getenv("PANELD_PRINT_CONFIG")) { hw_print_config(); return 0; } /* CI: paneld-config.txt */
     early_setup();
     struct app a = {.idle_reboot_s = PP_AUTOREBOOT_SECS, .boot_ms = now_ms(), .clock_on = 1};
     logmsg("phonepanel paneld %s starting (pid %d, t=%ld ms)", PP_VERSION, getpid(), a.boot_ms);

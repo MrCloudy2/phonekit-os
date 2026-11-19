@@ -22,7 +22,6 @@ AVB_FOOTER := 1
 
 # The panel displays the framebuffer as BGR although fbdev reports R at bit 16
 # (verified by eye with `ppctl colortest`, 2026-11-15).
-FB_SWAP_RB := 1
 
 FLASH_CMD = heimdall flash --$(TARGET_PARTITION) $(1) --no-reboot
 

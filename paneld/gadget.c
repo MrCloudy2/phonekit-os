@@ -11,7 +11,7 @@
 // stay, so their ttyGS ports survive (open fds get a hangup and are reopened).
 //
 // Samsung composite kernels (CONFIG_USB_CONFIGFS_UEVENT + ANDROID_SAMSUNG_COMPOSITE, e.g. Galaxy S8 /
-// Exynos 8895, detected at runtime by /sys/class/android_usb/android0/functions): a configfs link only parks
+// Exynos 8895; hw.c usb = HW_USB_SAMSUNG_COMPOSITE): a configfs link only parks
 // the function; it joins the config when its name is written to android0/functions, and android0/enable
 // binds and connects. Writing UDC alone binds an empty config (-EINVAL, "needs at least one function").
 // After enable=0 the functions are parked again and can't be unlinked (kernel WARN, function leaks), so
@@ -37,17 +37,11 @@ static char mode = 0; /* 'A' or 'B' once set up */
 static const char *hid_fn, *ncm_fn; /* ncm_fn: the mode-B network function (RNDIS or NCM) */
 
 #define SAMSUNG_USB "/sys/class/android_usb/android0"
-static int samsung_composite = -1; /* -1 = not probed yet */
 static char samsung_fns[256];      /* function names in link order, for android0/functions */
 static const char *acm_fns[GADGET_PORTS]; /* the ACM instances that exist (log, ctl, shell) */
 
-static int is_samsung_composite(void) {
-    if (samsung_composite < 0) {
-        samsung_composite = access(SAMSUNG_USB "/functions", W_OK) == 0;
-        if (samsung_composite) logmsg("usb: Samsung composite gadget (android0/functions + enable)");
-    }
-    return samsung_composite;
-}
+/* Declared per phone (hw.c), not guessed: the XCover Pro also has android0, but drives the gadget through UDC. */
+static int is_samsung_composite(void) { return phone.usb == HW_USB_SAMSUNG_COMPOSITE; }
 
 /* configfs function dir -> the name Samsung's make_usb_func_link matches: "acm.gs0" -> "acm",
    "rndis.usb0" -> "rndis". Samsung's f_fs.c names EVERY FunctionFS function "adb" (ffs.adb and ffs.gud alike),
