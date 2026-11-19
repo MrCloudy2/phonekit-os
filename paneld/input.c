@@ -40,6 +40,7 @@ int inputs_scan(struct input *in, int n, int max) {
         ioctl(fd, EVIOCGBIT(EV_KEY, sizeof keys), keys);
         ioctl(fd, EVIOCGBIT(EV_ABS, sizeof abs), abs);
         i->has_power = TEST_BIT(KEY_POWER, keys);
+        if (strcmp(i->name, "phonepanel-inject-keys")) keys_note_device(keys); /* not our own virtual keys */
         i->is_touch = TEST_BIT(ABS_MT_POSITION_X, abs);
         if (i->is_touch) {
             struct input_absinfo ax = {0}, ay = {0};

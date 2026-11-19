@@ -1,0 +1,127 @@
+# PhoneKit device record: Samsung Galaxy S8 (Exynos). Port in progress.
+# Nothing has been tested under PhoneKit yet. Values come from the official TWRP 3.7.0_9-0 dreamlte image
+# (sha256 df8ff976…b464, read with scripts/samsung-bootimg.py on 2026-11-18) or public sources, as noted.
+schema: 0
+
+identity:
+  name: Samsung Galaxy S8
+  model: SM-G950F
+  codename: dreamlte
+  soc: Exynos 8895 (universal8895)
+  soc_dir: socs/exynos8895
+  ram_gb: 4
+  battery_removable: false
+
+panel:
+  resolution: [1440, 2960]
+  type: OLED                 # Super AMOLED
+  controller: Samsung S6E3HA6 (s6e3ha6 driver in the TWRP kernel)
+
+boot:
+  unlock: >-
+    OEM unlocking in developer options (wipes, trips Knox). After a factory reset the switch stays hidden
+    until the phone has been online for ~7 days (RMM/KG "Prenormal" state shown in download mode)
+  flash_tool: heimdall
+  download_mode: phone off, hold Vol Down + Bixby + Power, then Vol Up to continue
+  recovery_combo: phone off, hold Vol Up + Bixby + Power
+  forced_reset: Vol Down + Power ~10 s
+  image_header_version: "0 (Samsung variant: DTB size at offset 40, DTBH table appended after second)"
+  page_size: 2048
+  ramdisk_compression: lzma in TWRP; kernel has the gzip decompressor too (unverified with PhoneKit's ramdisk)
+  partition: RECOVERY        # upper case; /dev/block/platform/11120000.ufs/by-name/RECOVERY (TWRP fstab)
+  partition_size: 48234496   # PIT 11776 x 4 KiB UFS blocks (sda8); blockdev --getsize64 in TWRP agrees (2026-11-18)
+  avb: none (no footer in the TWRP image)
+  ab_slots: false
+  stock_firmware: G950FXXUCDVG4 (Android 9, user build) on the test phone; Samsung FUS serves only G950FXXUCDZE7 (2026-06)
+  rom: "/e/OS 4.4.1-a14 UNOFFICIAL dreamlte (ronnz98, 2026-10-26, LineageOS 21 based): ro.build.type=userdebug, ro.debuggable=1 -> adb root. Installed from TWRP 2026-11-18; writes SYSTEM + BOOT only"
+  unlocked_state_seen: "ro.boot.flash.locked=0, verifiedbootstate=orange, sys.oem_unlock_allowed=1 (2026-11-18)"
+
+kernel:
+  version: 4.4.302 built from source (2026-11-19); earlier 4.4.111 prebuilt from TWRP 3.7.0
+  source: https://github.com/8890q/android_kernel_samsung_universal8895 (branch lineage-21, d93f7bb6), the tree behind the LineageOS 21 / /e/OS S8 builds
+  defconfig: exynos8895-dreamlte_defconfig + kernel/phonepanel.cfg (CONFIG_USB_CONFIGFS_F_HID, CONFIG_USB_CONFIGFS_MASS_STORAGE)
+  prebuilt: /e/OS 4.4.1 recovery.img (kernel 4.4.302 + DT table); the DT table stays prebuilt, the kernel Image is swapped
+  toolchain: "host clang 23 + GNU ld (aarch64-linux-gnu-ld): KERNEL_MAKE_FLAGS in device.mk sets the cross --prefix (else clang runs the x86 as), LD, and -Wno-strict-prototypes"
+  patches: "kernel-patches/: 0001 pidfd seq_put_decimal_ull (backport bug, garbage delimiter), 0002 cpuset allow_attach signature (backport bug, css read as tset), 0003 mkcompile_h first compiler line"
+  boot_to_paneld_ms: 1426   # source kernel (TWRP kernel: ~2200)
+  features: { devtmpfs: true, configfs: true, functionfs: true, hid_gadget: true, mass_storage_gadget: true, pstore_ramoops: true }
+
+display:
+  api: fbdev                 # Samsung DECON (decon_fb_alloc_memory, decon_pan_display in the image)
+  node: /dev/fb0             # also fb1, fb2
+  bits_per_pixel: 32         # probe.sh in TWRP, 2026-11-18
+  stride: 5760
+  virtual: [1440, 5920]      # double buffer via pan
+  backlight: /sys/class/backlight/panel (max 36600)   # paneld scales its 0..306 brightness to max_brightness (power.c); before that the S8 ran at 0.3 %
+  color_order_verified: true   # 2026-11-18 by eye: bars 2/3 (yellow/cyan) showed cyan/yellow -> FB_SWAP_RB := 1
+  verified: true               # 2026-11-18, M0: test pattern and touch drawing visible
+
+input:
+  touch: { name: sec_touchscreen, node: event0, driver: sec_ts (Samsung S6SY761), max_x: 4095, max_y: 4095, slots: 10, verified: true }   # draws under the finger (2026-11-18, by eye)
+  # touch range is 0-4095 on both axes, not pixels; paneld scales by absinfo (touch.c)
+  keys: { name: gpio_keys, node: event6, codes: [VOLUMEDOWN, VOLUMEUP, POWER, 0x2bf], verified: true }   # 0x2bf = Bixby; paneld reports 'keys power volup voldown bixby' (2026-11-18)
+  key_roles: "Bixby = mode key (short: next mode, long: menu, select in menus); no page key: hold Vol Up/Down for pages (MODE_KEY_LABEL / PAGE_KEY_LABEL in device.mk)"
+  # stock Android 9 event order (2026-11-18): event0 sec_touchscreen, event1 sec_touchpad, event2 grip_sensor,
+  # event3 ssp_context, event4 hrm_sensor, event5 Headset, event6 gpio_keys, event7 hall, event8 certify_hall
+
+usb:
+  udc: 10c00000.dwc3         # /sys/class/udc on stock Android 9 (2026-11-18); matches the TWRP kernel
+  speed: super-speed         # max_speed in TWRP (USB 3.1 Gen 1 port); untested under PhoneKit
+  gadget_configfs: true      # configfs present, but Samsung's composite layer sits on top (see quirks)
+  samsung_composite: true    # /sys/class/android_usb/android0/{functions,enable}; only ONE configfs gadget may exist
+  verified: true             # 2026-11-18: 3 ACM + RNDIS + adb enumerate (18d1:4ee4), ppctl works, phonebox agent connects
+  hid_gadget: true           # source-built kernel (2026-11-19); the TWRP and /e/OS kernels have no f_hid
+
+power:
+  charger: Maxim MAX77865 (max77865 drivers in the image)
+  fuel_gauge: max77865-fuelgauge; also mfc-charger (wireless), ps (power sharing)
+  charge_limit_method: "battery/batt_slate_mode = 1 stops charging (no charging_enabled here): CHARGE_CTL in device.mk. Tested by hand in TWRP 2026-11-18 (Charging/Fast -> Discharging/N/A -> back); the phone then runs from the battery"
+  boots_without_battery: no (battery not removable)
+  power_measured: "2026-11-19, fuel gauge in slate mode (scripts/power-measure.sh): active 954 mW (brightness 128 = 15306/36600), dim 576 mW, screen off 251 mW (64 mA @ 3.93 V). Off = panel really powered down (PANEL: BLANK POWER DOWN, dsim off), CPUs capped at 455/741 MHz, 98 % idle, modem never started. 251 mW is the Exynos 8895 floor without system suspend; test-power's 'off < 1/5 of active' fails on this phone (XCover Pro passes)"
+  battery_health_seen: "2026-11-19 under PhoneKit: fg_fullcapnom 2967 mAh of 3000 design, health Good, fg_asoc 100, fg_cycle 0, battery_cycle -1 (cycle count lives in Android's EFS). Learned values look unlearned/optimistic for a 2017 cell; measure capacity over one 60->40 % limiter cycle"
+
+sensors:
+  rotation: "manual only. The SSP sensor hub runs on the Broadcom BCM4775 GPS chip ('SSPBBD'): the kernel registers /dev/bbd_sensor, bbd_control, bbd_patch, and Android's Broadcom location daemon patches the chip firmware and bridges sensor packets. Without it the hub is down ('[SSPBBD]: ssp_down == true', CMD Fail -1): IIO devices exist, no samples. Manual rotation (Settings, ppctl rotate) works in all 4 orientations (test-touch, 2026-11-19)"
+  ssp_enable_format: "older SSP driver: /sys/class/sensors/ssp_sensor/enable is a decimal bitmask (bit 0 = accelerometer) with per-sensor *_poll_delay in ns; the 9611's 'type*10+1' format doesn't apply. Irrelevant until the hub can run"
+
+wifi:
+  chip: Broadcom BCM4361 over PCIe (bcmdhd, built in; wlan0, p2p0, swlan0 at boot)
+  firmware: "/vendor/etc/wifi from the /e/OS system image (system/vendor/etc/wifi, 26 files, 4 MB) into prebuilt/firmware/wifi. The driver picks bcmdhd_sta.bin_b0 + nvram.txt_r02j_b0 (chip rev B0, module r02j) and bcmdhd_clm.blob (CLM 9.9.1_SS_Dream); FW 13.38.64"
+  mac: "driver can't read Samsung's MAC file and uses the chip's default 04:d6:aa:.. (a Samsung OUI); efs not needed"
+  status: "2026-11-19: joins WPA2-PSK (CCMP), DHCP, DNS, 3/3 pings to 1.1.1.1 at 15 ms; power save on; 78 Mbit/s at -85 dBm"
+  power: "~145 mW extra connected (769 vs 624 mW, screen on, one measurement, weak -85 dBm signal; XCover Pro: ~13 mW). Re-measure with a strong signal"
+
+quirks:
+  - "USB gadget: Samsung composite (CONFIG_USB_CONFIGFS_UEVENT): a configfs link only parks a function; it joins the config when its name (acm, rndis, adb for ffs.adb) is written to /sys/class/android_usb/android0/functions, then android0/enable=1 binds to the hard-coded 10c00000.dwc3. Writing UDC alone fails: 'failed to start pp: -22' / 'needs at least one function'. paneld detects android0/functions at runtime (gadget.c)"
+  - "with devtmpfs (source kernel) every USB mode switch rebinds the functions and devtmpfs deletes/recreates /dev/hidgN; paneld kept writing to the deleted nodes (fd -> '/dev/hidg1 (deleted)', writes EAGAIN, silently dropped): MOUSE/KEYBOARD died after the first mode switch. paneld now reopens HID nodes after every bind (gadget_bind_gen)"
+  - "Samsung's f_fs.c names every FunctionFS function 'adb' (hard-coded), so the GUD display (ffs.gud) has to be enabled as 'adb' in android0/functions; paneld maps any ffs.* to adb"
+  - "SCREEN (GUD) failed on the TWRP 4.4.111 kernel and works on the source-built 4.4.302 one (same paneld). On TWRP's kernel: the host re-enables the GUD function several times while settling (FUNCTIONFS_DISABLE/ENABLE every 3-15 s), never sends SET_STATE_COMMIT that paneld sees, yet sends frames; once (booting straight into mode A) the GUD control path stalled and the shared ep0 blocked the ACM ports too (ppctl: 'paneld does not answer') while paneld's main loop ran. paneld now resumes with the last committed state on display-enable and counts requests (ppctl gud: requests). Fixed by building the kernel from source"
+  - "safe mode (Vol Down held while PhoneKit boots) did not trigger on 2026-11-19 with the key held from before 'adb reboot recovery': to check"
+  - "Samsung composite: unlinking a function after enable=0 WARNs 'Unable to locate function to unbind' and leaks it; unlink while still bound"
+  - "Samsung composite allows a single configfs gadget: a second mkdir under usb_gadget WARNs 'cannot create duplicate filename /devices/virtual/android_usb/android0'"
+  - "after unbinding TWRP's gadget by hand, TWRP's adb doesn't come back (not even after a cable replug); reboot into TWRP"
+  - "no devtmpfs in the TWRP kernel: /dev only has what paneld creates. Without /dev/urandom wpa_supplicant can't do the WPA handshake (network TEMP-DISABLED). paneld now creates the /sys/class/mem nodes when the devtmpfs mount fails"
+  - "the 4.4 kernel lacks rseq (syscall 293): Samsung's kernel prints a register dump for every unknown syscall; harmless noise in the log"
+  - "backlight max_brightness is 36600 (XCover Pro: 306): paneld now scales its brightness scale to max_brightness"
+  - "the stock phonebox agent keeps a connected phone awake and on the PHONEBOX page, which broke the display/keys/power suites: pptest.py now mutes the phone under test (ppctl phonebox mute 1). Pausing the agent instead (tried first) cut off every other phone it serves"
+  - "DECON shows the framebuffer as BGR (FB_SWAP_RB := 1), same as the Exynos 9611"
+  - "screen of the test phone is physically damaged: colour/visual checks by eye are approximate"
+  - "Samsung header v0 + DT boot image: AOSP unpack_bootimg crashes on it; import/mkimage use scripts/samsung-bootimg.py (round trip of the TWRP image is byte-identical)"
+  - "stock Android 9 has /dev/block/by-name (RECOVERY -> sda8); TWRP's fstab uses /dev/block/platform/11120000.ufs/by-name, which scripts/phone.sh also checks"
+  - "OEM unlocking hidden for ~7 days after a reset (RMM/KG Prenormal)"
+  - "no battery/charging_enabled: the limiter uses batt_slate_mode (inverted); scripts/power-measure.sh also toggles slate mode, so paneld's 30 s re-assert fights it on this phone"
+  - "heimdall: after a --no-reboot session the phone must re-enter download mode before the next one (Protocol initialisation failed)"
+  - "TWRP 3.7.0 has no /dev/block/by-name, only /dev/block/platform/11120000.ufs/by-name"
+
+milestones:
+  M0: confirmed 2026-11-18   # prebuilt TWRP 3.7.0 kernel; test pattern + clock
+  M3: confirmed 2026-11-19   # test-display 5/5: 1 Hz clock, damage tracking, zero idle frames, deep idle
+  M4: partial 2026-11-19     # test-power 11/12: state machine, CPU caps, limiter, thermal; off = 251 mW floor (no suspend)
+  M2: confirmed 2026-11-19   # test-touch 10/10: 10 contacts, 4 rotations, latency, stroke pixels
+  M5: confirmed 2026-11-19   # modes A and B, re-enumeration, 50 replugs, store/mode survive reboot (test-usb 11/11)
+  M6b: confirmed 2026-11-19  # MOUSE, KEYBOARD, COMBO via HID (test-input-modes 16/16)
+  M10: partial 2026-11-19    # joins WPA2, DHCP, internet; power cost to re-measure
+  M6: confirmed 2026-11-19   # SCREEN on the source kernel: GUD state committed, frames on the panel, HID touch lands at the right spot (test-usb 11/11); confirmed by eye with KDE
+  M12b: confirmed 2026-11-19 # test-phonebox 9/9 with the stock agent 0.9.14 over USB
+  M6e: partial 2026-11-19    # manual rotation in all 4 orientations; auto-rotate blocked (sensor hub needs Android's BBD daemon)
+  M7: confirmed 2026-11-19   # test-panel 21/21 (PPJ/1 over the USB network)

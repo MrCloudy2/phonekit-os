@@ -18,7 +18,11 @@ Unverified until someone ports one; please add yours.
   LineageOS config), RNDIS, mass storage (`CONFIG_USB_CONFIGFS_MASS_STORAGE=y`).
 - **NCM enumerates but never transmits** on the 4.14 Samsung kernel; use RNDIS (paneld does).
 - FunctionFS: don't keep a blocking ep0 read pending across a UDC unbind (deadlock); paneld polls ep0.
+- f_hid: don't close and reopen `/dev/hidgN` around a rebind. It locked up the 4.14 kernel hard (MOUSE mode, 2026-11-19);
+  the nodes survive a rebind here, so paneld keeps them open (the reopen is only for Samsung composite kernels).
 - High-speed only (USB 2.0), so SCREEN mode tops out around 50 fps at 1080×2340 with LZ4.
+- Rare: a soft replug (`soft_connect`) can leave the DWC3 stuck in state `default`; the host then logs
+  `device not accepting address, error -71`, a physical replug doesn't help, a reboot does (seen once in ~150).
 
 ## Sensors: CHUB sensor hub (SSP)
 - Firmware is built into the kernel (`firmware/sensorhub/`). Power on:

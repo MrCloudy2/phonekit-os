@@ -166,7 +166,10 @@ static void stream_free(struct stream *s) {
 
 /* ---------------------------------------------------------------- emulated Android commands */
 
-static void notify(char c) { if (notify_w >= 0) (void)!write(notify_w, &c, 1); }
+static void notify(char c) {
+    if (pb_agent_muted) return; /* test mode: the agent may not switch pages or wake/sleep the phone */
+    if (notify_w >= 0) (void)!write(notify_w, &c, 1);
+}
 
 static const char *prop(const char *k) {
     static const char *const P[][2] = {

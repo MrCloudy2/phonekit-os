@@ -33,6 +33,15 @@ def pp(*args, timeout=90):
     return r.stdout
 
 
+def fb_size():
+    """The phone's panel size from `ppctl info` ("fb 1440x2960 ..."), so the checks fit every device."""
+    for line in pp("info").splitlines():
+        if line.startswith("fb "):
+            w, h = line.split()[1].split("x")
+            return int(w), int(h)
+    raise RuntimeError("ppctl info has no fb line")
+
+
 def check(name, cond, detail=""):
     print(f"  {'PASS' if cond else 'FAIL'}  {name}  {detail}")
     if not cond:
@@ -81,7 +90,7 @@ def touch(*a):
     pp("touch", *a)
 
 
-# Default portrait grid 6x12 on 1080x2340: cell 180 x 195 below the title bar.
+# Default portrait grid 6x12 (on 1080x2340: cell 180 x 195) below the title bar.
 def cell_center(p_info, x, y, w=1, h=1):
     W, H, cols, rows = p_info["w"], p_info["h"], p_info["cols"], p_info["rows"]
     top = 90  # title bar (panel.c)
@@ -105,7 +114,7 @@ def main():
 
     print("== basics")
     inf = p.info()
-    check("info reports grid + size", inf.get("cols") == 6 and inf.get("rows") == 12 and inf.get("w") == 1080, str(inf))
+    check("info reports grid + size", inf.get("cols") == 6 and inf.get("rows") == 12 and (inf.get("w"), inf.get("h")) == fb_size(), str(inf))
     t = time.perf_counter(); r = p.request({"op": "ping"}, "pong"); rtt = (time.perf_counter() - t) * 1000
     check("ping → pong", r.get("op") == "pong", f"{rtt:.1f} ms")
     check("unknown op → error", p.request({"op": "nope"}, "error").get("msg") == "unknown op")
@@ -162,7 +171,8 @@ def main():
     check("toggle flips 1,0,1,0", vals == [1, 0, 1, 0], str(vals))
     sx, sy = cell_center(inf, 0, 9, 6, 2)
     ends = []
-    for x0, x1 in [(100, 1000), (1000, 60)]:
+    pw = inf["w"]
+    for x0, x1 in [(pw * 9 // 100, pw * 93 // 100), (pw * 93 // 100, pw * 6 // 100)]:  # 100->1000, 1000->60 on 1080
         touch("swipe", x0, sy, x1, sy, 40)
         ev = [e for e in p.events(timeout=1.0) if e.get("id") == "s"]
         ends.append((len(ev), ev[-1]["value"] if ev else None))

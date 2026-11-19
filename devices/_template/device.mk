@@ -19,6 +19,16 @@ AVB_FOOTER := 1
 # 1 if the panel shows red and blue swapped (check with `scripts/ppctl.py colortest`).
 FB_SWAP_RB := 0
 
+# Battery attribute (under /sys/class/power_supply/battery) that switches charging, for the charge limiter.
+# INVERT := 1 when writing 1 stops charging (e.g. batt_slate_mode, input_suspend).
+CHARGE_CTL        := charging_enabled
+CHARGE_CTL_INVERT := 0
+
+# On-screen names of the side key that switches modes (xcover 0xfc or bixby 0x2bf in paneld/keys.c) and of
+# the page key. Leave PAGE_KEY_LABEL empty when there is no page key (hold Vol Up/Down instead).
+MODE_KEY_LABEL := XCOVER
+PAGE_KEY_LABEL := TOP
+
 # How to flash from the emergency mode. Samsung:
 FLASH_CMD = heimdall flash --$(TARGET_PARTITION) $(1) --no-reboot
 # fastboot devices:

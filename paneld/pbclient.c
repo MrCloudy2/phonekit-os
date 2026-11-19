@@ -542,6 +542,7 @@ static long last_seen_ms;        /* last time the agent stream was up */
 
 static void draw_ambient(void);
 static const char *standby_mode(void);
+int pb_agent_muted;
 static void draw_overlays(void);
 static int modal(void);
 static void draw_toast(void);
@@ -1559,13 +1560,14 @@ static void standby_tick(void) {
         gone = 1;
         const char *m = standby_mode();
         logmsg("phonebox: PC gone (%s) -> standby %s", usb_away ? us : "no stream", m);
-        if (!strcmp(m, "sleep")) power_off("PC gone");
+        if (pb_agent_muted) ;
+        else if (!strcmp(m, "sleep")) power_off("PC gone");
         else if (!strcmp(m, "ambient")) { power_dim("PC gone"); if (visible()) draw_ambient(); }
         else if (visible()) pb_draw(); /* hold: the status dot turns red */
     } else if (!away && gone) {
         gone = 0;
         logmsg("phonebox: PC back");
-        power_wake("PC back");
+        if (!pb_agent_muted) power_wake("PC back");
         if (visible()) pb_draw();
     }
 }
@@ -1590,7 +1592,7 @@ static void load_approvals(const char *s) {
         str(s, n, q, "source", a->source, sizeof a->source);
         a->expires = (long)(num(s, n, q, "expiresAt", 0) / 1000);
     }
-    if (nap) { power_wake("approval"); logmsg("phonebox: %d approval(s) waiting", nap); }
+    if (nap) { if (!pb_agent_muted) power_wake("approval"); logmsg("phonebox: %d approval(s) waiting", nap); }
 }
 
 static void approval_done(const char *path) {
@@ -1707,7 +1709,7 @@ static void handle_events(void) {
             toast.col = !strcmp(lv, "error") ? 0xef4444 : !strcmp(lv, "warn") ? 0xf59e0b : !strcmp(lv, "ok") || !strcmp(lv, "success") ? 0x22c55e : 0x60a5fa;
             double secs = num(s, t, d, "seconds", 5);
             toast.until = now_ms() + (long)(clampf(1, (float)secs, 60) * 1000);
-            power_wake("notify");
+            if (!pb_agent_muted) power_wake("notify");
             logmsg("phonebox: notify '%s' '%s'", toast.title, toast.text);
             if (visible()) { draw_toast(); fb_present(fb); }
         } else if (!strcmp(kind, "goto")) {
@@ -1715,7 +1717,7 @@ static void handle_events(void) {
             str(s, t, d, "page", page, sizeof page);
             int k = page_index(page);
             logmsg("phonebox: goto '%s' -> %d", page, k);
-            if (k >= 0) { cur = k; power_wake("goto"); if (visible()) pb_draw(); }
+            if (k >= 0) { cur = k; if (!pb_agent_muted) power_wake("goto"); if (visible()) pb_draw(); }
         } else if (!strncmp(kind, "approval", 8)) want_approvals = 1;
         free(q[i]);
     }
@@ -1741,7 +1743,10 @@ void pb_handle(void) {
         int had = have_cfg;
         load_config(c.data);
         full = 1;
-        if (!had && have_cfg && hm_owner() == OWN_PAGE && ui_page() != UI_PAGE_PANEL && ui_page() != UI_PAGE_MODEM && gadget_mode() == 'B') ui_page_set(UI_PAGE_PANEL);
+        /* first dashboard: show it (not in test mode, where the suites own the screen) */
+        if (!had && have_cfg && !pb_agent_muted && hm_owner() == OWN_PAGE && ui_page() != UI_PAGE_PANEL && ui_page() != UI_PAGE_MODEM &&
+            gadget_mode() == 'B')
+            ui_page_set(UI_PAGE_PANEL);
     }
     if (s.data) {
         load_state(s.data);

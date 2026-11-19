@@ -18,6 +18,14 @@
 #include <unistd.h>
 
 #define BATT "/sys/class/power_supply/battery"
+/* The battery attribute that switches charging (device.mk CHARGE_CTL). INVERT=1 when writing 1 stops charging
+   (Samsung batt_slate_mode on the Galaxy S8: the phone then runs from the battery instead of USB). */
+#ifndef PP_CHARGE_CTL
+#define PP_CHARGE_CTL "charging_enabled"
+#endif
+#ifndef PP_CHARGE_CTL_INVERT
+#define PP_CHARGE_CTL_INVERT 0
+#endif
 
 struct power_cfg pcfg = {
     .dim_after_s = 0, .off_after_s = 0, .bright = 128, .dim = 12, /* never by default: opt in via Settings */
@@ -28,6 +36,11 @@ struct power_cfg pcfg = {
 static enum { ACTIVE, DIM, OFF } state = ACTIVE;
 static const char *const state_name[] = {"active", "dim", "off"};
 static char bl_path[160];
+/* Brightness values in paneld (settings, steps, GUD percent) are on one scale, 0..BL_REF (the XCover Pro's native
+   range, where this was tuned). They are scaled to each panel's max_brightness when written: the Galaxy S8's
+   panel runs 0..36600, so writing 128 raw would be 0.3 % of full brightness. */
+#define BL_REF 306
+static int bl_max = BL_REF, bl_last = -1;
 static long user_ms, last_batt_ms = -100000;
 static int charging_allowed = -1, forced_off;
 static struct fb *fb;
@@ -46,7 +59,8 @@ static void write_int(const char *path, int v) {
 }
 
 static void set_backlight(int v) {
-    if (bl_path[0]) write_int(bl_path, v);
+    bl_last = v;
+    if (bl_path[0]) write_int(bl_path, (int)((long)v * bl_max / BL_REF));
 }
 
 /* cap: 1 = clamp every cpufreq policy to its minimum, 0 = restore the maximum */
@@ -94,6 +108,10 @@ void power_init(struct fb *f) {
         while ((e = readdir(d)))
             if (e->d_name[0] != '.') {
                 snprintf(bl_path, sizeof bl_path, "/sys/class/backlight/%.64s/brightness", e->d_name);
+                char mp[160];
+                snprintf(mp, sizeof mp, "/sys/class/backlight/%.64s/max_brightness", e->d_name);
+                int m = read_int(mp, BL_REF);
+                if (m > 0) bl_max = m;
                 break;
             }
         closedir(d);
@@ -106,8 +124,8 @@ void power_init(struct fb *f) {
     pcfg.charge_lo = store_get_int("power.charge_lo", pcfg.charge_lo);
     pcfg.charge_hi = store_get_int("power.charge_hi", pcfg.charge_hi);
     set_backlight(pcfg.bright);
-    logmsg("power: backlight %s, dim after %d s, off after %d s, charge window %d-%d %%",
-           bl_path[0] ? bl_path : "(none)", pcfg.dim_after_s, pcfg.off_after_s, pcfg.charge_lo, pcfg.charge_hi);
+    logmsg("power: backlight %s (max %d), dim after %d s, off after %d s, charge window %d-%d %%",
+           bl_path[0] ? bl_path : "(none)", bl_max, pcfg.dim_after_s, pcfg.off_after_s, pcfg.charge_lo, pcfg.charge_hi);
 }
 
 void power_user_activity(void) {
@@ -165,7 +183,7 @@ static void battery_tick(void) {
     else if (cap >= 0 && cap <= pcfg.charge_lo) allow = 1;
     else if (allow < 0) allow = cap < pcfg.charge_hi; /* first run: inside the window */
     /* re-assert every tick: the battery driver may re-enable charging on cable events */
-    if (allow >= 0) write_int(BATT "/charging_enabled", allow);
+    if (allow >= 0) write_int(BATT "/" PP_CHARGE_CTL, PP_CHARGE_CTL_INVERT ? !allow : allow);
     if (allow != charging_allowed)
         logmsg("power: charging %s (battery %d %%, %d.%d C)", allow ? "on" : "off", cap, temp / 10, temp % 10);
     charging_allowed = allow;
@@ -215,12 +233,12 @@ int power_ctl(char **argv, int argc, char *buf, size_t len) {
         logmsg("power: %s = %d", argv[2], v);
     }
     return snprintf(buf, len,
-                    "state %s\nidle_ms %ld\nlast_wake_ms %ld\nbacklight %d\n"
+                    "state %s\nidle_ms %ld\nlast_wake_ms %ld\nbacklight %d\nbacklight_raw %d\nbacklight_max %d\n"
                     "dim_after_s %d\noff_after_s %d\nbright %d\ndim %d\n"
                     "battery_pct %d\nbattery_temp_dC %d\ncharging_allowed %d\nlimiter %d\ncharge_lo %d\ncharge_hi %d\n"
                     "temp_limit_dC %d\ntemp_crit_dC %d\nforced_off %d\nbattery_current_ua %d\n",
                     state_name[state], now_ms() - user_ms, wake_ms_last,
-                    bl_path[0] ? read_int(bl_path, -1) : -1, pcfg.dim_after_s, pcfg.off_after_s, pcfg.bright,
+                    bl_path[0] ? bl_last : -1, bl_path[0] ? read_int(bl_path, -1) : -1, bl_max, pcfg.dim_after_s, pcfg.off_after_s, pcfg.bright,
                     pcfg.dim, last_cap, last_temp, charging_allowed, pcfg.limiter, pcfg.charge_lo,
                     pcfg.charge_hi, pcfg.temp_limit, pcfg.temp_crit, forced_off,
                     read_int(BATT "/batt_current_ua_now", 0));

@@ -26,6 +26,15 @@ def pp(*args, timeout=90):
     return r.stdout
 
 
+def fb_size():
+    """The phone's panel size from `ppctl info` ("fb 1440x2960 ..."), so the checks fit every device."""
+    for line in pp("info").splitlines():
+        if line.startswith("fb "):
+            w, h = line.split()[1].split("x")
+            return int(w), int(h)
+    raise RuntimeError("ppctl info has no fb line")
+
+
 def check(name, cond, detail=""):
     print(f"  {'PASS' if cond else 'FAIL'}  {name}  {detail}")
     if not cond:
@@ -68,10 +77,35 @@ def host_netif():
     return None
 
 
+def caps(blk, kind):
+    """The capability bitmask of one /proc/bus/input/devices block ("B: ABS=..." is hex words, most significant
+    first) as an int, 0 if absent."""
+    for l in blk.splitlines():
+        if l.startswith(f"B: {kind}="):
+            v = 0
+            for w in l.split("=", 1)[1].split():
+                v = (v << 64) | int(w, 16)
+            return v
+    return 0
+
+
+ABS_MT_POSITION_X, REL_X, REL_Y, BTN_LEFT = 0x35, 0, 1, 0x110
+
+
+def is_touchscreen(blk):
+    return bool(caps(blk, "ABS") >> ABS_MT_POSITION_X & 1)
+
+
+def is_mouse(blk):
+    rel = caps(blk, "REL")
+    return bool(rel >> REL_X & 1 and rel >> REL_Y & 1 and caps(blk, "KEY") >> BTN_LEFT & 1)
+
+
 def hid_event_node():
     name = None
     for blk in open("/proc/bus/input/devices").read().split("\n\n"):
-        if "phonepanel" in blk and "H: Handlers" in blk and "B: ABS=" in blk:  # the touchscreen (not mouse/keyboard)
+        # the touchscreen: multitouch X, not just any ABS axis (the media-key device has one too, e.g. a volume axis)
+        if "phonepanel" in blk and "H: Handlers" in blk and is_touchscreen(blk):
             for l in blk.splitlines():
                 if l.startswith("H: Handlers"):
                     for h in l.split("=")[1].split():
@@ -81,7 +115,7 @@ def hid_event_node():
 
 
 def main():
-    replugs = int(sys.argv[sys.argv.index("--replugs") + 1]) if "--replugs" in sys.argv else 50
+    replugs = int(sys.argv[sys.argv.index("--replugs") + 1]) if "--replugs" in sys.argv else 5  # stress: --replugs 50 (can hang the 9611 DWC3, see quirks)
     pp("idle", 0)
 
     print("== mode B (smart: USB network)")
@@ -108,20 +142,25 @@ def main():
     ifs = interfaces()
     check("re-enumerated without a phone reboot; ACMs still at 0/2/4",
           all(ifs.get(i, ("?", "?"))[1] == "cdc_acm" for i in (0, 2, 4)), f"control back after {dt:.1f} s")
-    check("HID interface bound (usbhid)", any(c == "03" for c, _ in ifs.values()), f"{ifs}")
+    has_hid = "hid yes" in pp("usb")  # paneld: does this kernel offer the HID function?
     node = None
-    for _ in range(20):  # the host's hid-multitouch needs a moment after enumeration
-        node = hid_event_node()
-        if node:
-            break
-        time.sleep(0.5)
-    check("host sees a phonepanel touchscreen input device", node is not None, f"{node}")
+    if has_hid:
+        check("HID interface bound (usbhid)", any(c == "03" for c, _ in ifs.values()), f"{ifs}")
+        for _ in range(20):  # the host's hid-multitouch needs a moment after enumeration
+            node = hid_event_node()
+            if node:
+                break
+            time.sleep(0.5)
+        check("host sees a phonepanel touchscreen input device", node is not None, f"{node}")
+    else:
+        print("  SKIP  HID touchscreen  kernel has no HID gadget function (CONFIG_USB_CONFIGFS_F_HID)")
     if node:
         xs, ys = [], []
         for attempt in range(3):  # first reports can race the host driver's setup
             time.sleep(1.0)
             fd = os.open(node, os.O_RDONLY | os.O_NONBLOCK)
-            pp("touch", "tap", 540, 1170)  # panel centre -> HID ~16383,16383
+            pw, ph = fb_size()
+            pp("touch", "tap", pw // 2, ph // 2)  # panel centre -> HID ~16383,16383
             end = time.time() + 2
             while time.time() < end:
                 r, _, _ = select.select([fd], [], [], 0.3)

@@ -86,6 +86,7 @@ static volatile int enabled;            /* host enabled the USB function (config
 static volatile int active;             /* host owns the screen (display enabled + committed) */
 static uint8_t last_status = GUD_STATUS_OK;
 static uint8_t cur_format = GUD_PIXEL_FORMAT_RGB565, pending_format = GUD_PIXEL_FORMAT_RGB565;
+static int committed_once; /* the host has committed a state at least once since boot */
 static int use_lz4 = 1, want_xrgb;
 static int pending_backlight = -1;
 static unsigned long frames, bytes_in, px_in, pans;
@@ -100,14 +101,23 @@ static struct gud_set_buffer_req pend;
 int gud_ready(void) { return ready; }
 int gud_active(void) { return active && enabled; }
 
+static unsigned long req_in[256], req_out[256]; /* control requests seen, by bRequest (for porting/debugging) */
+
 int gud_stats(char *b, size_t len) {
     long span = last_frame_ms - first_frame_ms;
     long f = frames ? (long)frames : 1;
-    return snprintf(b, len, "ready %d\nenabled %d\nactive %d\nformat 0x%02x\nlz4 %d\nframes %lu\nbytes %lu\nraw_bytes %lu\nfps_avg %.1f\n"
+    int n = snprintf(b, len, "ready %d\nenabled %d\nactive %d\nformat 0x%02x\nlz4 %d\nframes %lu\nbytes %lu\nraw_bytes %lu\nfps_avg %.1f\n"
                     "ms_per_frame usb %.2f lz4 %.2f blit %.2f flush %.2f\npans %lu\n",
                     ready, enabled, active, cur_format, use_lz4, frames, bytes_in, px_in,
                     span > 0 && frames > 1 ? (frames - 1) * 1000.0 / span : 0.0,
                     t_usb_us / 1000.0 / f, t_lz4_us / 1000.0 / f, t_blit_us / 1000.0 / f, t_flush_us / 1000.0 / f, pans);
+    n += snprintf(b + n, len - n, "requests");
+    for (int r = 0; r < 256 && n < (int)len - 16; r++) {
+        if (req_in[r]) n += snprintf(b + n, len - n, " in%02x:%lu", r, req_in[r]);
+        if (req_out[r]) n += snprintf(b + n, len - n, " out%02x:%lu", r, req_out[r]);
+    }
+    n += snprintf(b + n, len - n, "\n");
+    return n;
 }
 
 void gud_stats_reset(void) { pans = 0; frames = bytes_in = px_in = 0; t_usb_us = t_lz4_us = t_blit_us = t_flush_us = 0; first_frame_ms = last_frame_ms = 0; }
@@ -446,6 +456,7 @@ static void handle_setup(const struct usb_ctrlrequest *s) {
     uint8_t req = s->bRequest;
     uint16_t wlen = le16toh(s->wLength);
     int in = s->bRequestType & USB_DIR_IN;
+    (in ? req_in : req_out)[req]++;
     if ((s->bRequestType & USB_TYPE_MASK) != USB_TYPE_VENDOR) { in ? stall_in() : (void)!write(ep0, NULL, 0); return; }
     if (in) {
         uint8_t b[256];
@@ -549,7 +560,7 @@ static void handle_setup(const struct usb_ctrlrequest *s) {
     case GUD_REQ_SET_STATE_COMMIT:
         cur_format = pending_format;
         if (pending_backlight >= 0) power_set_percent(pending_backlight);
-        active = 1;
+        active = 1; committed_once = 1;
         logmsg("gud: state committed: %dx%d %s", fb->pw, fb->ph, cur_format == GUD_PIXEL_FORMAT_RGB565 ? "RGB565" : "XRGB8888");
         break;
     case GUD_REQ_SET_CONTROLLER_ENABLE:
@@ -559,6 +570,13 @@ static void handle_setup(const struct usb_ctrlrequest *s) {
     case GUD_REQ_SET_DISPLAY_ENABLE:
         if (n >= 1 && b[0]) power_wake("gud");
         else power_off("gud");
+        /* After a USB function reset (FUNCTIONFS_DISABLE/ENABLE, seen on the Galaxy S8 while the host settles) the host
+           driver re-enables controller and display but doesn't commit its state again, and keeps sending frames:
+           resume with the state it committed last, or nothing would ever reach the panel. */
+        if (n >= 1 && b[0] && !active && committed_once && enabled) {
+            active = 1;
+            logmsg("gud: display on without a new commit: resuming with the last committed state");
+        }
         logmsg("gud: display %s", n >= 1 && b[0] ? "on" : "off (DPMS)");
         break;
     default:

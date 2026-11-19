@@ -2,7 +2,8 @@
 //
 // The CHUB firmware is built into the kernel (firmware/sensorhub/*.fw); Android powers the
 // co-processor on by writing its `poweron` sysfs attribute, after which the SSP driver
-// registers IIO devices per sensor. We use:
+// registers IIO devices per sensor. Phones whose SSP hub is a separate MCU (Galaxy S8 / Exynos 8895)
+// have no contexthub device: the kernel brings the hub up and the IIO devices exist from boot. We use:
 //   - device_orientation (type 27): orientation computed on the co-processor, event on
 //     change only. Preferred: zero main-CPU work.
 //   - accelerometer (type 1, ~6 Hz): fallback; we derive the orientation with hysteresis.
@@ -17,14 +18,13 @@
 #include <string.h>
 #include <unistd.h>
 
-#define CHUB "/sys/devices/platform/11980000.contexthub/poweron"
 #define SSP_ENABLE "/sys/class/sensors/ssp_sensor/enable"
 #define T_ACCEL 1
 #define T_ORIENT 27
 #define G_UNITS 4096      /* accelerometer: ~4096 per g (lying flat read z ~4194) */
 #define STABLE_MS 600
 
-static int powered, running;
+static int powered, running, hub_failed;
 static int acc_fd = -1, ori_fd = -1;
 static char acc_dev[64], ori_dev[64];
 static int candidate = -1, current = -1;
@@ -66,12 +66,38 @@ static int open_stream(const char *dev) {
     return open(dev, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
 }
 
-/* Powers the co-processor (once per boot); returns 0 when the sensor devices exist. */
+/* The co-processor's poweron attribute (/sys/devices/platform/<addr>.contexthub/poweron), if this phone has one. */
+static int find_chub(char *out, size_t len) {
+    DIR *d = opendir("/sys/devices/platform");
+    if (!d) return -1;
+    struct dirent *e;
+    int found = -1;
+    while ((e = readdir(d)) && found < 0) {
+        const char *dot = strstr(e->d_name, ".contexthub");
+        if (!dot || dot[11]) continue;
+        snprintf(out, len, "/sys/devices/platform/%.64s/poweron", e->d_name);
+        if (access(out, W_OK) == 0) found = 0;
+    }
+    closedir(d);
+    return found;
+}
+
+/* Powers the co-processor if there is one (once per boot); returns 0 when the sensor devices exist.
+   Failures are logged once; the caller may retry quietly. */
 static int hub_up(void) {
     if (powered) return 0;
-    if (write_file(CHUB, "1") < 0) { logmsg("sensors: CHUB poweron: %s", strerror(errno)); return -1; }
+    char chub[160];
+    if (find_chub(chub, sizeof chub) == 0 && write_file(chub, "1") < 0) {
+        if (!hub_failed) logmsg("sensors: %s: %s", chub, strerror(errno));
+        hub_failed = 1;
+        return -1;
+    }
     for (int i = 0; i < 40 && find_iio("accelerometer_sensor", acc_dev, sizeof acc_dev) < 0; i++) usleep(100000);
-    if (!acc_dev[0]) { logmsg("sensors: sensor hub didn't register its devices"); return -1; }
+    if (!acc_dev[0]) {
+        if (!hub_failed) logmsg("sensors: no accelerometer_sensor IIO device (no SSP sensor hub?)");
+        hub_failed = 1;
+        return -1;
+    }
     find_iio("device_orientation", ori_dev, sizeof ori_dev);
     powered = 1;
     logmsg("sensors: hub up (accel %s, orientation %s)", acc_dev, ori_dev[0] ? ori_dev : "-");

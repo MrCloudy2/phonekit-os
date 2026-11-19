@@ -17,7 +17,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 PPCTL = [sys.executable, os.path.join(HERE, "ppctl.py")]
 EVIOCGRAB = 0x40044590
-W, H = 1080, 2340
+W, H = 1080, 2340  # replaced by the phone's size in main()
 failures = []
 
 
@@ -28,10 +28,43 @@ def pp(*args, timeout=60):
     return r.stdout.strip()
 
 
+def fb_size():
+    """The phone's panel size from `ppctl info` ("fb 1440x2960 ..."), so the checks fit every device."""
+    for line in pp("info").splitlines():
+        if line.startswith("fb "):
+            w, h = line.split()[1].split("x")
+            return int(w), int(h)
+    raise RuntimeError("ppctl info has no fb line")
+
+
 def check(name, cond, detail=""):
     print(f"  {'PASS' if cond else 'FAIL'}  {name}  {detail}")
     if not cond:
         failures.append(name)
+
+
+def caps(blk, kind):
+    """The capability bitmask of one /proc/bus/input/devices block ("B: ABS=..." is hex words, most significant
+    first) as an int, 0 if absent."""
+    for l in blk.splitlines():
+        if l.startswith(f"B: {kind}="):
+            v = 0
+            for w in l.split("=", 1)[1].split():
+                v = (v << 64) | int(w, 16)
+            return v
+    return 0
+
+
+ABS_MT_POSITION_X, REL_X, REL_Y, BTN_LEFT = 0x35, 0, 1, 0x110
+
+
+def is_touchscreen(blk):
+    return bool(caps(blk, "ABS") >> ABS_MT_POSITION_X & 1)
+
+
+def is_mouse(blk):
+    rel = caps(blk, "REL")
+    return bool(rel >> REL_X & 1 and rel >> REL_Y & 1 and caps(blk, "KEY") >> BTN_LEFT & 1)
 
 
 def host_nodes():
@@ -42,7 +75,7 @@ def host_nodes():
         ev = [h for l in blk.splitlines() if l.startswith("H: Handlers") for h in l.split("=")[1].split() if h.startswith("event")]
         if not ev:
             continue
-        if "B: REL=" in blk:
+        if is_mouse(blk):  # relative X+Y and a left button (the media-key device also has a REL wheel bit)
             mouse = "/dev/input/" + ev[0]
         elif "B: LED=" in blk:
             kbd = "/dev/input/" + ev[0]
@@ -74,8 +107,14 @@ def keys_down(evs):
 
 
 def main():
+    global W, H
     pp("idle", 0); pp("power", "wake")
+    W, H = fb_size()
     pp("power", "set", "dim_after_s", 0); pp("power", "set", "off_after_s", 0)
+    if "hid yes" not in pp("usb"):
+        print("  SKIP  MOUSE / KEYBOARD / COMBO modes  kernel has no HID gadget function (CONFIG_USB_CONFIGFS_F_HID)")
+        print("\nALL PASSED (nothing to test)")
+        return
     if "mode A" not in pp("usb"):
         pp("usb", "mode", "A"); time.sleep(2); pp("--wait", 30, "wait", timeout=45)
     for _ in range(20):

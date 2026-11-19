@@ -37,7 +37,11 @@ IFACE = {"log": "00", "ctl": "02", "shell": "04"}  # USB interface of each ACM p
 
 def find_port(which="ctl"):
     """The phonepanel tty for `which`, chosen by USB interface number, never by
-    ttyACM index: other host software may grab whatever is /dev/ttyACM0."""
+    ttyACM index: other host software may grab whatever is /dev/ttyACM0.
+    With several PhoneKit phones connected, PPCTL_SERIAL=<USB serial> picks one; without it this refuses to guess
+    (a command for one phone, e.g. a self-update, must never reach another)."""
+    want = os.environ.get("PPCTL_SERIAL", "")
+    found = []
     for tty in sorted(glob.glob("/sys/class/tty/ttyACM*")):
         dev = os.path.realpath(os.path.join(tty, "device"))
         try:
@@ -57,8 +61,16 @@ def find_port(which="ctl"):
         except OSError:
             continue
         if mfr == "phonepanel":  # VID:PID differs per mode (A uses the GUD ID 1d50:614d)
-            return "/dev/" + os.path.basename(tty)
-    return None
+            try:
+                serial = open(os.path.join(d, "serial")).read().strip()
+            except OSError:
+                serial = ""
+            if not want or serial == want:
+                found.append((serial, "/dev/" + os.path.basename(tty)))
+    if len(found) > 1:
+        sys.exit("ppctl: several PhoneKit phones are connected (" + ", ".join(s for s, _ in found) +
+                 "): set PPCTL_SERIAL=<serial> (pptest.py --serial) to pick one")
+    return found[0][1] if found else None
 
 
 class Ctl:
@@ -139,8 +151,19 @@ class Ctl:
                 view = view[n:]
         deadline = time.monotonic() + (timeout or self.timeout)
         blocks, code = [], None
+        # These commands hang up this tty on purpose (USB re-enumerates or the phone reboots). paneld replies first,
+        # but the host can still see the port vanish before it has read the reply: that is success, not an error.
+        w = line.split()
+        hangs_up = (w[:2] == ["usb", "mode"] or w[:2] == ["usb", "reconnect"] or w[:1] == ["reboot"]
+                    # any mode switch can move USB between mode A and B (menu/settings only draw)
+                    or (w[:1] == ["mode"] and len(w) > 1 and w[1] not in ("menu", "settings")))
         while True:
-            l = self._line(deadline)
+            try:
+                l = self._line(deadline)
+            except ConnectionError:
+                if hangs_up:
+                    return True, "(port closed by the switch)", blocks, code
+                raise
             if l.startswith(".data "):
                 n = int(l.split()[1])
                 blocks.append(self._bytes(n, deadline))

@@ -1,0 +1,21 @@
+Subject: [PATCH] pidfd: use the 4.4 seq_put_decimal_ull() signature
+
+The pidfd backport calls seq_put_decimal_ull(m, "Pid:\t", ...), the newer API that takes a string.
+In 4.4 the second argument is a single delimiter char, so the string pointer was truncated to one
+byte (garbage in /proc/<pid>/fdinfo of a pidfd). clang 23 rejects it (-Wint-conversion).
+Print the label with seq_puts() and pass no delimiter.
+
+diff --git a/kernel/fork.c b/kernel/fork.c
+index bf48fff0..0c31fded 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -1316,7 +1316,8 @@ static void pidfd_show_fdinfo(struct seq_file *m, struct file *f)
+ 	struct pid_namespace *ns = file_inode(m->file)->i_sb->s_fs_info;
+ 	struct pid *pid = f->private_data;
+ 
+-	seq_put_decimal_ull(m, "Pid:\t", pid_nr_ns(pid, ns));
++	seq_puts(m, "Pid:\t");
++	seq_put_decimal_ull(m, 0, pid_nr_ns(pid, ns));
+ 	seq_putc(m, '\n');
+ }
+ #endif

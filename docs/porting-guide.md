@@ -62,6 +62,9 @@ scripts/ppctl.py --wait 90 info
 ```
 From here you can work without buttons: screenshots (`ppctl.py screenshot out.png`), touch injection, a shell, and logs.
 If nothing enumerates, check the UDC name: `ls /sys/class/udc` in the shell (or from TWRP).
+If the log says `failed to start pp: -22` or `needs at least one function`, the kernel has Samsung's composite
+gadget layer (`/sys/class/android_usb/android0/`). paneld detects it and binds through `android0/functions` +
+`enable`; see [socs/exynos8895/quirks.md](../socs/exynos8895/quirks.md) for how it works.
 
 ## Stage 5: Find the quirks
 Run everything with `scripts/pptest.py` (writes a report for your PR), or the suites one at a time, and fix what fails. Record every finding in `device.yaml` → `quirks:`
@@ -84,6 +87,11 @@ scripts/test-keys.py
 ```bash
 scripts/test-input-modes.py
 ```
+The suites read the phone's features first (screen size and hardware keys from `ppctl info`, HID support from
+`ppctl usb`) and report `SKIP` for what your phone doesn't have. A `FAIL` means something is wrong on your phone,
+or a suite still assumes another phone: fix the suite to ask the phone, don't special-case yours (see
+CONTRIBUTING.md → Tests).
+
 Typical device-specific things:
 | Area | Where it shows up | XCover Pro example |
 |---|---|---|
@@ -94,6 +102,9 @@ Typical device-specific things:
 | Charger control | test-power | `/sys/class/power_supply/battery/charging_enabled` |
 | Rotation sensor | Settings → Rotation AUTO | CHUB sensor hub, `device_orientation` |
 | Network gadget | PANEL mode ping | RNDIS works, NCM doesn't transmit |
+| `/dev` without devtmpfs | Wi-Fi never joins (`TEMP-DISABLED`) | Galaxy S8's TWRP kernel: no devtmpfs, so no `/dev/urandom` for wpa_supplicant; paneld now creates the memory nodes itself |
+| USB gadget layer | `failed to start pp: -22` | Galaxy S8: Samsung composite (`android0/functions` + `enable`), handled by paneld |
+| Sensor hub | rotation never changes | Galaxy S8: hub runs on the GPS chip behind Android's `lhd` daemon, so manual rotation only |
 
 Some of these paths are still hard-coded in paneld (`paneld/sensors.c`, `paneld/power.c`), because there has only been one
 device so far. When yours differs, move the value into `device.mk` as a `-D` define (see how `FB_SWAP_RB`

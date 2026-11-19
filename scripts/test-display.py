@@ -24,6 +24,15 @@ def pp(*args, timeout=90):
     return r.stdout
 
 
+def fb_size():
+    """The phone's panel size from `ppctl info` ("fb 1440x2960 ..."), so the checks fit every device."""
+    for line in pp("info").splitlines():
+        if line.startswith("fb "):
+            w, h = line.split()[1].split("x")
+            return int(w), int(h)
+    raise RuntimeError("ppctl info has no fb line")
+
+
 def kv(text):
     return {l.split(" ", 1)[0]: l.split(" ", 1)[1].split() for l in text.splitlines() if " " in l}
 
@@ -51,14 +60,16 @@ awk -v c0=$c0 -v c1=$c1 -v i0=$i0 -v i1=$i1 -v u0=$u0 -v u1=$u1 -v hz=$hz 'BEGIN
 
 def main():
     pp("idle", 0)
+    W, H = fb_size()
+    pp("page", 0)  # the test page: nothing else (e.g. a PHONEBOX dashboard on the panel page) may draw
     pp("pattern"); pp("clock", "on")
     print("== idle screen, 1 Hz clock")
     pp("fstats", "reset"); time.sleep(10.5)
     s = kv(pp("fstats"))
     frames = int(s["frames"][0]); dmg = list(map(int, s["last_damage"]))
     check("about 1 frame per second", 9 <= frames <= 12, f"frames in 10.5 s = {frames}")
-    check("damage = clock rectangle only", dmg[2] * dmg[3] < 1080 * 2340 // 20,
-          f"last damage x,y,w,h = {dmg} ({dmg[2] * dmg[3] * 100 // (1080 * 2340)} % of screen)")
+    check("damage = clock rectangle only", dmg[2] * dmg[3] < W * H // 20,
+          f"last damage x,y,w,h = {dmg} ({dmg[2] * dmg[3] * 100 // (W * H)} % of screen)")
 
     print("== idle screen, clock off")
     pp("clock", "off"); time.sleep(1.5); pp("fstats", "reset"); time.sleep(10)

@@ -1,0 +1,19 @@
+Subject: [PATCH] cpuset: match the allow_attach() signature
+
+cgroup calls ss->allow_attach(css, tset) (include/linux/cgroup-defs.h), but cpuset_allow_attach()
+took only tset, so it read the css pointer as the task set. clang 23 rejects the initializer
+(-Wincompatible-function-pointer-types). Take both arguments; dst_css is unused, as before.
+
+diff --git a/kernel/cpuset.c b/kernel/cpuset.c
+index a045358a..76f4a587 100644
+--- a/kernel/cpuset.c
++++ b/kernel/cpuset.c
+@@ -2145,7 +2145,7 @@ void cpuset_fork(struct task_struct *task)
+ 	task->mems_allowed = current->mems_allowed;
+ }
+ 
+-static int cpuset_allow_attach(struct cgroup_taskset *tset)
++static int cpuset_allow_attach(struct cgroup_subsys_state *dst_css, struct cgroup_taskset *tset)
+ {
+ 	const struct cred *cred = current_cred(), *tcred;
+ 	struct task_struct *task;

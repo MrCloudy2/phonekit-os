@@ -19,6 +19,27 @@ Prefer data over code. If your phone needs a different sysfs path or behaviour, 
 variable that becomes a `-D` define (see `FB_SWAP_RB` in the Makefile → `paneld/fb.c`), or detect it at
 runtime. Don't add `#ifdef SAMSUNG_A50`-style blocks.
 
+## Tests
+The suites in `scripts/test-*.py` (run all of them with `scripts/pptest.py`) must work on every phone. Don't
+hard-code one phone's values (resolution, CPU frequencies, key names, charge behaviour): read them from the phone
+(`ppctl info` reports `fb WxH` and the hardware `keys`, `ppctl usb` reports `hid yes|no`) and print
+`SKIP  <check>  <why>` when the phone lacks a feature. A check that only passes on your phone is a bug in the test.
+A suite must not depend on what ran before it: `pptest.py` puts the phone in USB mode B (PHONEBOX, the phone draws
+its own screen) before every suite, and a suite that needs another mode sets it itself. Keep re-enumerations few:
+every one is a chance to hit a controller bug (the Exynos 9611 DWC3 can hang after many soft replugs), so stress
+loops are opt-in flags (`test-usb.py --replugs 50`), not the default.
+
+## Don't break other phones
+Every device folder has a `pptest-baseline.txt`: what that phone passed last time. `scripts/pptest.py` compares
+each run against it (`scripts/ppregress.py`) and lists regressions. Rules for changes to shared code (`paneld/`,
+`scripts/`):
+- New behaviour for your phone comes from a `device.mk` variable that defaults to the old behaviour, or from runtime
+  detection that keeps the old path where the feature isn't there.
+- CI builds and starts paneld with every device's `device.mk`; it has to stay green for all of them.
+- Run pptest on every phone you have, and list them in the PR. Maintainers run it on theirs before merging; a
+  regression on any phone blocks the merge until it's fixed.
+- After a verified run with new passes, refresh the baseline: `scripts/ppregress.py <device> --update`.
+
 ## Other contributions
 Examples (`examples/<name>/`), host clients in other languages, protocol ideas (open an issue first), and
 fixes to paneld. Run `make test` (qemu) before sending C changes; on hardware, the `scripts/test-*.py` suites.
