@@ -1,6 +1,7 @@
 // paneld — shared declarations.
 #pragma once
 /* built with -D_GNU_SOURCE */
+#include "hw.h"
 #include <linux/fb.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -158,14 +159,6 @@ int keys_present(char *buf, size_t len);
 /* Extra side keys: XCover Pro's programmable key, Galaxy S8's Bixby key. Both default to mode_next / menu. */
 #define KEY_XCOVER 0xfc
 #define KEY_BIXBY 0x2bf
-/* On-screen names of the mode key and the page key (device.mk MODE_KEY_LABEL / PAGE_KEY_LABEL). An empty page
-   label means the phone has no page key: hold Vol Up/Down instead. */
-#ifndef PP_MODE_KEY_LABEL
-#define PP_MODE_KEY_LABEL "XCOVER"
-#endif
-#ifndef PP_PAGE_KEY_LABEL
-#define PP_PAGE_KEY_LABEL "TOP"
-#endif
 
 /* ui.c — built-in pages until the widget engine (M8) */
 enum { UI_PAGE_TEST, UI_PAGE_STATUS, UI_PAGE_PANEL, UI_PAGE_MODEM, UI_PAGES };

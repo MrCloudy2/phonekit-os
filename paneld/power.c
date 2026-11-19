@@ -18,14 +18,6 @@
 #include <unistd.h>
 
 #define BATT "/sys/class/power_supply/battery"
-/* The battery attribute that switches charging (device.mk CHARGE_CTL). INVERT=1 when writing 1 stops charging
-   (Samsung batt_slate_mode on the Galaxy S8: the phone then runs from the battery instead of USB). */
-#ifndef PP_CHARGE_CTL
-#define PP_CHARGE_CTL "charging_enabled"
-#endif
-#ifndef PP_CHARGE_CTL_INVERT
-#define PP_CHARGE_CTL_INVERT 0
-#endif
 
 struct power_cfg pcfg = {
     .dim_after_s = 0, .off_after_s = 0, .bright = 128, .dim = 12, /* never by default: opt in via Settings */
@@ -183,7 +175,11 @@ static void battery_tick(void) {
     else if (cap >= 0 && cap <= pcfg.charge_lo) allow = 1;
     else if (allow < 0) allow = cap < pcfg.charge_hi; /* first run: inside the window */
     /* re-assert every tick: the battery driver may re-enable charging on cable events */
-    if (allow >= 0) write_int(BATT "/" PP_CHARGE_CTL, PP_CHARGE_CTL_INVERT ? !allow : allow);
+    if (allow >= 0) { /* the attribute that switches charging: hw.c charge_ctl (inverted for batt_slate_mode) */
+        char cp[160];
+        snprintf(cp, sizeof cp, BATT "/%s", phone.charge_ctl);
+        write_int(cp, phone.charge_ctl_invert ? !allow : allow);
+    }
     if (allow != charging_allowed)
         logmsg("power: charging %s (battery %d %%, %d.%d C)", allow ? "on" : "off", cap, temp / 10, temp % 10);
     charging_allowed = allow;

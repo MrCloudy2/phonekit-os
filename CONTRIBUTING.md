@@ -15,9 +15,9 @@ doesn't" in a device folder saves the next person days.
    `devices/*/local.mk` are gitignored for that reason. Kernel patches are fine (GPL-2.0).
 
 ## Device-specific code
-Prefer data over code. If your phone needs a different sysfs path or behaviour, add a `device.mk`
-variable that becomes a `-D` define (see `FB_SWAP_RB` in the Makefile → `paneld/fb.c`), or detect it at
-runtime. Don't add `#ifdef SAMSUNG_A50`-style blocks.
+Prefer data over code. If your phone needs a different sysfs path or behaviour, set it in your
+`devices/<dev>/hw.c`, or add a field to `struct phone_hw` (`paneld/hw.h`) whose default keeps the old behaviour.
+Don't add `#ifdef SAMSUNG_A50`-style blocks, and don't guess the phone type at runtime.
 
 ## Tests
 The suites in `scripts/test-*.py` (run all of them with `scripts/pptest.py`) must work on every phone. Don't
@@ -30,15 +30,18 @@ every one is a chance to hit a controller bug (the Exynos 9611 DWC3 can hang aft
 loops are opt-in flags (`test-usb.py --replugs 50`), not the default.
 
 ## Don't break other phones
-Every device folder has a `pptest-baseline.txt`: what that phone passed last time. `scripts/pptest.py` compares
-each run against it (`scripts/ppregress.py`) and lists regressions. Rules for changes to shared code (`paneld/`,
-`scripts/`):
-- New behaviour for your phone comes from a `device.mk` variable that defaults to the old behaviour, or from runtime
-  detection that keeps the old path where the feature isn't there.
-- CI builds and starts paneld with every device's `device.mk`; it has to stay green for all of them.
-- Run pptest on every phone you have, and list them in the PR. Maintainers run it on theirs before merging; a
-  regression on any phone blocks the merge until it's fixed.
-- After a verified run with new passes, refresh the baseline: `scripts/ppregress.py <device> --update`.
+Three layers, cheapest first:
+1. **Design.** What paneld does differently per phone lives in `devices/<dev>/hw.c` (fields in `paneld/hw.h`; see
+   the porting guide, "The hardware layer"). A new field's default in `HW_DEFAULTS` is the old behaviour, so other
+   phones don't move. No `#ifdef <phone>`, and no guessing the phone type at runtime.
+2. **CI, no hardware.** Every device builds, starts under qemu, and prints what paneld does on it
+   (`make device=<dev> config-check` against `devices/<dev>/paneld-config.txt`). If your diff changes another
+   phone's file, you changed that phone. Say why in the PR, or fix it.
+3. **Hardware.** `make check-all` runs `scripts/pptest.py` on every connected phone against its
+   `pptest-baseline.txt` and fails on any regression. Paste `out/check-all.md` into the PR. Maintainers run it on
+   their phones before merging, and a regression on any phone blocks the merge.
+
+After a verified run with new passes, refresh the baseline: `scripts/ppregress.py <device> --update`.
 
 ## Other contributions
 Examples (`examples/<name>/`), host clients in other languages, protocol ideas (open an issue first), and

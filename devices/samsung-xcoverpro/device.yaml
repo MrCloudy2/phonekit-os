@@ -45,7 +45,7 @@ kernel:
 display:
   api: fbdev            # Samsung DECON (decon_fb_*, decon_pan_display)
   node: /dev/fb0
-  format: ARGB8888 as reported (r16 g8 b0 a24), but the panel shows it as BGR -> FB_SWAP_RB quirk
+  format: ARGB8888 as reported (r16 g8 b0 a24), but the panel shows it as BGR -> hw.c fb_swap_rb
   color_order_verified: true    # 2026-11-15, by eye (ppctl colortest): RED block looked blue before the fix
   stride: 4320
   virtual: [1080, 4680]    # double buffer available via pan
@@ -67,7 +67,7 @@ boot_timing:
 
 quirks:
   - "DECON fbdev pan never re-enables the window after a powerdown (decon_set_par is #if 0'd in decon_pan_display): after unblank, force FBIOPUT_VSCREENINFO (fb_set_par) or the panel stays black"
-  - "DECON pan hard-codes ABGR8888: the panel shows the framebuffer as BGR (FB_SWAP_RB)"
+  - "DECON pan hard-codes ABGR8888: the panel shows the framebuffer as BGR (hw.c fb_swap_rb)"
   - "sensor hub (CHUB) firmware is built into the kernel; power it on via /sys/devices/platform/11980000.contexthub/poweron; device_orientation (type 27) gives rotation events"
   - "LineageOS restores recovery on every boot unless persist.vendor.recovery_update=false"
   - "kernel services the watchdog itself; userspace needn't touch /dev/watchdog"

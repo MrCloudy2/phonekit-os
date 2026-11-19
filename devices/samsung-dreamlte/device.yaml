@@ -53,14 +53,14 @@ display:
   stride: 5760
   virtual: [1440, 5920]      # double buffer via pan
   backlight: /sys/class/backlight/panel (max 36600)   # paneld scales its 0..306 brightness to max_brightness (power.c); before that the S8 ran at 0.3 %
-  color_order_verified: true   # 2026-11-18 by eye: bars 2/3 (yellow/cyan) showed cyan/yellow -> FB_SWAP_RB := 1
+  color_order_verified: true   # 2026-11-18 by eye: bars 2/3 (yellow/cyan) showed cyan/yellow -> hw.c fb_swap_rb = 1
   verified: true               # 2026-11-18, M0: test pattern and touch drawing visible
 
 input:
   touch: { name: sec_touchscreen, node: event0, driver: sec_ts (Samsung S6SY761), max_x: 4095, max_y: 4095, slots: 10, verified: true }   # draws under the finger (2026-11-18, by eye)
   # touch range is 0-4095 on both axes, not pixels; paneld scales by absinfo (touch.c)
   keys: { name: gpio_keys, node: event6, codes: [VOLUMEDOWN, VOLUMEUP, POWER, 0x2bf], verified: true }   # 0x2bf = Bixby; paneld reports 'keys power volup voldown bixby' (2026-11-18)
-  key_roles: "Bixby = mode key (short: next mode, long: menu, select in menus); no page key: hold Vol Up/Down for pages (MODE_KEY_LABEL / PAGE_KEY_LABEL in device.mk)"
+  key_roles: "Bixby = mode key (short: next mode, long: menu, select in menus); no page key: hold Vol Up/Down for pages (mode_key / page_key in hw.c)"
   # stock Android 9 event order (2026-11-18): event0 sec_touchscreen, event1 sec_touchpad, event2 grip_sensor,
   # event3 ssp_context, event4 hrm_sensor, event5 Headset, event6 gpio_keys, event7 hall, event8 certify_hall
 
@@ -75,7 +75,7 @@ usb:
 power:
   charger: Maxim MAX77865 (max77865 drivers in the image)
   fuel_gauge: max77865-fuelgauge; also mfc-charger (wireless), ps (power sharing)
-  charge_limit_method: "battery/batt_slate_mode = 1 stops charging (no charging_enabled here): CHARGE_CTL in device.mk. Tested by hand in TWRP 2026-11-18 (Charging/Fast -> Discharging/N/A -> back); the phone then runs from the battery"
+  charge_limit_method: "battery/batt_slate_mode = 1 stops charging (no charging_enabled here): charge_ctl in hw.c. Tested by hand in TWRP 2026-11-18 (Charging/Fast -> Discharging/N/A -> back); the phone then runs from the battery"
   boots_without_battery: no (battery not removable)
   power_measured: "2026-11-19, fuel gauge in slate mode (scripts/power-measure.sh): active 954 mW (brightness 128 = 15306/36600), dim 576 mW, screen off 251 mW (64 mA @ 3.93 V). Off = panel really powered down (PANEL: BLANK POWER DOWN, dsim off), CPUs capped at 455/741 MHz, 98 % idle, modem never started. 251 mW is the Exynos 8895 floor without system suspend; test-power's 'off < 1/5 of active' fails on this phone (XCover Pro passes)"
   battery_health_seen: "2026-11-19 under PhoneKit: fg_fullcapnom 2967 mAh of 3000 design, health Good, fg_asoc 100, fg_cycle 0, battery_cycle -1 (cycle count lives in Android's EFS). Learned values look unlearned/optimistic for a 2017 cell; measure capacity over one 60->40 % limiter cycle"
@@ -104,7 +104,7 @@ quirks:
   - "the 4.4 kernel lacks rseq (syscall 293): Samsung's kernel prints a register dump for every unknown syscall; harmless noise in the log"
   - "backlight max_brightness is 36600 (XCover Pro: 306): paneld now scales its brightness scale to max_brightness"
   - "the stock phonebox agent keeps a connected phone awake and on the PHONEBOX page, which broke the display/keys/power suites: pptest.py now mutes the phone under test (ppctl phonebox mute 1). Pausing the agent instead (tried first) cut off every other phone it serves"
-  - "DECON shows the framebuffer as BGR (FB_SWAP_RB := 1), same as the Exynos 9611"
+  - "DECON shows the framebuffer as BGR (hw.c fb_swap_rb = 1), same as the Exynos 9611"
   - "screen of the test phone is physically damaged: colour/visual checks by eye are approximate"
   - "Samsung header v0 + DT boot image: AOSP unpack_bootimg crashes on it; import/mkimage use scripts/samsung-bootimg.py (round trip of the TWRP image is byte-identical)"
   - "stock Android 9 has /dev/block/by-name (RECOVERY -> sda8); TWRP's fstab uses /dev/block/platform/11120000.ufs/by-name, which scripts/phone.sh also checks"

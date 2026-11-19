@@ -23,13 +23,14 @@ that turns an old phone into a touch panel. Users flash it to real phones. Mista
   `ppctl usb`: `hid yes|no`), test what it has, and print `SKIP  <check>  <why>` for what it lacks. If a suite needs
   a fact paneld doesn't report yet, make paneld report it (detected at runtime, or from `device.mk`).
 - Record what you verified in `docs/verification/` and keep `ROADMAP.md` statuses honest.
-- A port must not break the phones that already work. Shared code (`paneld/`, `scripts/`) changes behaviour only
-  through a `device.mk` variable whose default is the old behaviour, or through runtime detection that falls back
-  to the old path (example: the Samsung composite gadget path runs only where `/sys/class/android_usb/android0`
-  exists). CI builds and starts paneld with every `devices/*/device.mk`. On hardware, `scripts/pptest.py` ends with
-  `scripts/ppregress.py`: a check that passed in `devices/<dev>/pptest-baseline.txt` and now fails is a regression
-  and blocks the change. Update a baseline (`ppregress.py <dev> --update`) only after a verified run, and say in
-  the PR which phones you ran pptest on.
+- A port must not break the phones that already work. Per-phone behaviour lives in `devices/<dev>/hw.c` (the
+  table in `paneld/hw.h`). A new field gets a default in `HW_DEFAULTS` that keeps the old behaviour, so other phones
+  don't change. No `#ifdef <phone>` and no runtime guessing of the phone type. CI builds and starts paneld for every
+  device, and compares `PANELD_PRINT_CONFIG` with `devices/<dev>/paneld-config.txt`: if another phone's file changes
+  in your diff, you changed that phone. On hardware, `make check-all` runs pptest on every connected phone
+  against its `devices/<dev>/pptest-baseline.txt`: a check that passed there and now fails is a regression and
+  blocks the change. Update a baseline (`ppregress.py <dev> --update`) only after a verified run, and paste
+  `out/check-all.md` into the PR.
 - Document as you port, not at the end: every fact you learn about the phone (with its source and date) goes into
   `device.yaml`, every chip-wide finding into `socs/<soc>/quirks.md`, every new symptom and fix into
   `docs/porting-guide.md` or `docs/recovery.md`. That includes dead ends and tool limitations you hit. The next
