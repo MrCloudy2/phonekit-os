@@ -34,13 +34,15 @@ struct phone_hw {
     struct hw_key page_key;     /* next page / hold: previous page. Moves in the menu. code 0: hold Vol Up/Down */
     enum hw_usb usb;
     const char *sensor_hub_on;  /* sysfs attribute that powers the sensor co-processor, "" = the kernel does it */
+    const char *usb_config_name; /* configs/c.1 configuration string. Exynos 9810 composite kernels treat any name
+                                    but "Conf 1" as a GSI/VTS image and clear the functions on every relink */
 };
 
 /* The behaviour every phone had before each field existed. Never change a value here: add a field instead. */
 #define HW_DEFAULTS                                                                                                   \
     .name = "?", .fb_swap_rb = 0, .charge_ctl = "charging_enabled", .charge_ctl_invert = 0,                          \
     .mode_key = {0xfc, "XCOVER"}, .page_key = {KEY_MACRO17, "TOP"}, .usb = HW_USB_CONFIGFS,               \
-    .sensor_hub_on = "/sys/devices/platform/11980000.contexthub/poweron"
+    .sensor_hub_on = "/sys/devices/platform/11980000.contexthub/poweron", .usb_config_name = "phonepanel"
 
 extern const struct phone_hw phone;
 

@@ -69,6 +69,10 @@ If nothing enumerates, check the UDC name: `ls /sys/class/udc` in the shell (or 
 If the log says `failed to start pp: -22` or `needs at least one function`, the kernel has Samsung's composite
 gadget layer (`/sys/class/android_usb/android0/`). paneld detects it and binds through `android0/functions` +
 `enable`; see [socs/exynos8895/quirks.md](../socs/exynos8895/quirks.md) for how it works.
+If the gadget comes up at boot but the first USB mode switch leaves only the serial ports (no `/dev/hidg*`, no
+network, no adb) and the kernel log says `ADB Only mode for recovery or VTS test`, the kernel wants the config named
+`Conf 1`: set `.usb_config_name = "Conf 1"` in `hw.c` (Exynos 9810, see
+[socs/exynos9810/quirks.md](../socs/exynos9810/quirks.md)).
 
 ## Stage 5: Find the quirks
 Run everything with `scripts/pptest.py` (writes a report for your PR), or the suites one at a time, and fix what fails. Record every finding in `device.yaml` → `quirks:`
@@ -109,6 +113,8 @@ Typical device-specific things:
 | `/dev` without devtmpfs | Wi-Fi never joins (`TEMP-DISABLED`) | Galaxy S8's TWRP kernel: no devtmpfs, so no `/dev/urandom` for wpa_supplicant; paneld now creates the memory nodes itself |
 | USB gadget layer | `failed to start pp: -22` | Galaxy S8: Samsung composite (`android0/functions` + `enable`): `hw.c` `.usb = HW_USB_SAMSUNG_COMPOSITE` |
 | Sensor hub | rotation never changes | Galaxy S8: hub runs on the GPS chip behind Android's `lhd` daemon, so manual rotation only |
+| USB config name | first mode switch drops HID/network/adb, `ADB Only mode` in dmesg | Galaxy S9+: Exynos 9810 composite treats any config name but `Conf 1` as a GSI image: `hw.c` `.usb_config_name = "Conf 1"` |
+| Newer kernel than your clang expects | `-Werror` stops the build on diagnostics the tree's own clang didn't have | Galaxy S9+: `KERNEL_KCFLAGS` in `device.mk` (several flags; `KERNEL_MAKE_FLAGS` splits on spaces) |
 
 ### The hardware layer: `devices/<dev>/hw.c`
 Everything paneld does differently per phone is one table, `struct phone_hw` (fields and meanings in

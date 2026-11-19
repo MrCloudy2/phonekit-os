@@ -1,0 +1,19 @@
+# paneld behaviour on this phone: PANELD_PRINT_CONFIG=1 paneld (devices/<dev>/hw.c + shared defaults)
+device samsung-star2lte
+fb_swap_rb 1
+charging /sys/class/power_supply/battery/batt_slate_mode, write 0 to charge
+mode_key 703 BIXBY
+page_key (none: hold Vol Up/Down for pages)
+usb samsung-composite (android0 functions + enable)
+sensor_hub_on (none: the kernel powers the hub)
+usb_config_name Conf 1
+hint_status_1 BIXBY: NEXT MODE  HOLD: MENU
+hint_status_2 VOL: BRIGHTNESS  HOLD VOL: PAGES
+hint_trackpad BIXBY: NEXT MODE   HOLD BIXBY: MENU
+# default key bindings
+power    short=screen_toggle  long=(hold 3 s: reboot)
+volup    short=bright_up      long=page_prev
+voldown  short=bright_down    long=page_next
+xcover   short=mode_next      long=menu
+bixby    short=mode_next      long=menu
+top      short=page_next      long=page_prev

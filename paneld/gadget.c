@@ -393,7 +393,7 @@ int gadget_setup(char ttys[GADGET_PORTS][64], struct fb *f) {
     wr("strings/0x409/serialnumber", serial);
     mkdir(CFG, 0755);
     mkdir(CFG "/strings/0x409", 0755);
-    wr("configs/c.1/strings/0x409/configuration", "phonepanel");
+    wr("configs/c.1/strings/0x409/configuration", phone.usb_config_name);
     wr("configs/c.1/MaxPower", "500");
 
     const char *names[GADGET_PORTS][3] = {{"acm.gs0", "acm.gs5", "acm.usb0"},

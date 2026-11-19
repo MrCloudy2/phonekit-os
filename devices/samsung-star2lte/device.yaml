@@ -1,0 +1,120 @@
+# PhoneKit device record: Samsung Galaxy S9+ (Exynos). Third PhoneKit phone: pptest 92 pass / 0 fail / 1 skip on
+# 2026-11-19 (source-built LineageOS 24.0 kernel). Open: colours and touch by eye, Wi-Fi, auto-rotate, a long soak.
+# Values were read on 2026-11-19 from the test phone running LineageOS 23.2 (adb root): getprop, /proc/config.gz,
+# scripts/probe.sh, getevent, blockdev. The boot image layout comes from its RECOVERY dump (sha256 fc9ad790…a879)
+# read with scripts/samsung-bootimg.py. Public sources are named where used.
+schema: 0
+
+identity:
+  name: Samsung Galaxy S9+
+  model: SM-G965F
+  codename: star2lte
+  soc: Exynos 9810 (universal9810)
+  soc_dir: socs/exynos9810
+  ram_gb: 6                  # MemTotal 5790340 kB
+  battery_removable: false
+  board_revision: 26         # ro.boot.revision; probe: "Samsung Star2 rev26 board based on EXYNOS9810"
+  siblings: "Galaxy S9 (SM-G960F, starlte) and Note 9 (SM-N960F, crownlte) share the kernel tree; separate defconfigs and DTBs"
+
+panel:
+  resolution: [1440, 2960]
+  type: OLED                 # Super AMOLED, 6.2"
+  controller: Samsung S6E3HA8 (CONFIG_EXYNOS_DECON_LCD_S6E3HA8); /sys/class/lcd/panel/lcd_type SDC_D11443
+
+boot:
+  unlock: >-
+    OEM unlocking in developer options (wipes, trips Knox). Already unlocked on the test phone: it runs an
+    unofficial LineageOS. The ROM spoofs the lock props (ro.boot.flash.locked=1, verifiedbootstate=green,
+    warranty_bit=0), so read the real state in download mode
+  flash_tool: heimdall
+  download_mode: phone off, hold Vol Down + Bixby + Power, then Vol Up to continue (LineageOS wiki, starlte/star2lte)
+  recovery_combo: phone off, hold Vol Up + Bixby + Power, release when the blue text appears
+  forced_reset: Vol Down + Power ~10 s
+  image_header_version: "0 (Samsung variant: DTB table size at offset 40, DTBH table after second; same as the S8)"
+  page_size: 2048
+  load_addresses: "kernel 0x10008000, ramdisk 0x11000000, second 0x10f00000, tags 0x10000100"
+  trailer: "SEANDROIDENFORCE after the DT table (Samsung's mkbootimg.mk appends it)"
+  partition: RECOVERY        # upper case; /dev/block/by-name/RECOVERY -> sda11
+  partition_size: 68149248   # blockdev --getsize64 (2026-11-19); LineageOS BoardConfig agrees
+  boot_partition_size: 57671680
+  dtb_dtbo_partitions: "DTB (sda8) and DTBO (sda9) exist, 8 MiB each, all zeros: the DT table lives in the boot/recovery images"
+  avb: none (no footer in the LineageOS images)
+  ab_slots: false
+  stock_bootloader: G965FXXUHFVG4 (ro.bootloader on the test phone)
+  rom: "LineageOS 24.0-20261112-UNOFFICIAL-star2lte (Android 17, krazey90, XDA; source github.com/ExyHyperBrick). Upgraded from 23.2-20260614 on 2026-11-19 keeping userdata. Fingerprint says userdebug while ro.build.type=user / ro.debuggable=0 are spoofed; adb root works (USB and Wi-Fi debugging)"
+  rom_upgrade_23_to_24: "24.0 turns the ODM partition (sda20) into ext4 /metadata. From 23.2 without wiping: flash the 24.0 recovery, enable ADB in its Advanced menu, run lineage-24.0-initialize-metadata-sideload.zip (formats ODM only), sideload the ROM, then GApps (MindTheGapps 17) before the first boot. An unplugged cable mid-sideload gave 'Install completed with status 2' and nothing broke: resending the ROM fixed it"
+  recovery_restore: "persist.vendor.recovery_update=true and vendor_flash_recovery.rc: the ROM rewrites RECOVERY at boot. Set it to false before flashing PhoneKit (docs/recovery.md)"
+  recovery_on_phone: "LineageOS 24.0 recovery (lineage-24.0-20261112-recovery-star2lte.img, md5 147bc745…93421); the maintainer supports only Lineage Recovery, not TWRP. Its adb starts unauthorized: Advanced -> Enable ADB"
+
+kernel:
+  version: "4.9.337-ies-g401189fdfc65 (LineageOS 24.0 ROM kernel, Android clang 22.0.2); PhoneKit runs the same commit built from source with host clang 23"
+  source: https://github.com/ExyHyperBrick/android_kernel_samsung_exynos9810 commit 401189fdfc65 (branch lineage-24.0, 2026-11-10). 23.2 ran 87ff302a9ad9 (lineage-23.2-bpf-test)
+  build: "host clang 23 + ld.lld; KERNEL_KCFLAGS turns three new clang diagnostics back into warnings (device.mk); kernel-patches/0001 mkcompile_h. The source build's config equals the ROM kernel's /proc/config.gz plus kernel/phonepanel.cfg (F_HID, mass storage)"
+  defconfig: exynos9810-star2lte_defconfig (LOCALVERSION -ies)
+  older_source: "LineageOS/android_kernel_samsung_exynos9810 lineage-20 (4.9.118), the last official LineageOS (20) tree; not what runs here"
+  features: { devtmpfs: false, configfs: true, functionfs: true, hid_gadget: true, mass_storage_gadget: true, pstore_ramoops: true, modules: true }   # source build; the ROM kernel has no f_hid / mass storage
+  prebuilt: LineageOS 24.0 recovery.img (DT table; its kernel for KERNEL=prebuilt)
+
+display:
+  api: fbdev                 # Samsung DECON (CONFIG_EXYNOS_DECON_FB, CONFIG_EXYNOS_DECON_9810)
+  node: /dev/fb0
+  bits_per_pixel: 32         # probe.sh under LineageOS
+  stride: 5760
+  virtual: [1440, 5920]      # double buffer via pan
+  backlight: /sys/class/backlight/panel (max 44800)
+  color_order_verified: false  # expected BGR (LineageOS TARGET_RECOVERY_PIXEL_FORMAT ABGR_8888): hw.c fb_swap_rb = 1; by eye still to do
+  verified: true               # 2026-11-19: first boot showed the PHONEBOX dashboard (screenshot); test-display 5/5
+
+input:
+  touch: { name: sec_touchscreen, node: event0, max_x: 4095, max_y: 4095, slots: 10, verified: true }   # getevent -lp; test-touch 10/10 (2026-11-19)
+  keys: { name: gpio_keys, node: event5, codes: [VOLUMEDOWN, VOLUMEUP, POWER, 0x2bf], verified: true }   # 0x2bf = Bixby (KEY_WINK in the DTS); paneld 'keys power volup voldown bixby', test-keys 8/8
+  key_roles: "Bixby = mode key, no page key (hold Vol Up/Down for pages), as on the S8"
+  # LineageOS 23.2 event order: event0 sec_touchscreen, event1 grip_sensor, event2 ssp_context, event3 hrm_sensor,
+  # event4 Headset, event5 gpio_keys, event6 hall, event7 certify_hall, event8 uinput-sec-fp
+
+usb:
+  udc: 10c00000.dwc3
+  speed: super-speed         # max_speed under LineageOS
+  gadget_configfs: true
+  samsung_composite: true    # CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE + CONFIG_USB_CONFIGFS_UEVENT in /proc/config.gz
+  hid_gadget: true           # source-built kernel; not in the LineageOS kernels
+  config_name: "Conf 1"      # required: any other name triggers the kernel's GSI 'ADB only' path (hw.c usb_config_name)
+  verified: true             # 2026-11-19: 3 ACM + RNDIS + adb (18d1:4ee4), mode A HID x4 + GUD; test-usb 11/11, input-modes 16/16
+
+power:
+  charger: Maxim MAX77705 (with MAX77705 fuel gauge, mfc-charger wireless, ps power sharing)
+  charge_limit_method: "battery/batt_slate_mode = 1 stops charging (no battery/charging_enabled; max77705-fuelgauge has one): hw.c charge_ctl, inverted. test-power limiter checks pass (2026-11-19)"
+  power_measured: "2026-11-19, fuel gauge in slate mode (test-power): ~800 mW active (test pattern, backlight 128 of 306), ~435 mW dim, 125-150 mW off (blanked, CPUs capped). A dark PHONEBOX page instead of the pattern reads ~470 mW active: OLED"
+  cpufreq: "big cluster 650-2314 MHz, but the hotplug governor (HP_GOV) caps it at 1794 MHz with all 4 big cores online; little 455-1950 MHz"
+  boot_to_paneld_ms: 3205   # paneld_start_ms on the source kernel (S8: 1426); not trimmed yet
+  boots_without_battery: no (battery not removable)
+  battery_seen: "2026-11-19 under LineageOS: 13 %, Charging/Fast, health Good, fg_fullcapnom 3300 mAh, fg_asoc 99, battery_cycle -1"
+
+sensors:
+  rotation: "expected manual only: CONFIG_SENSORS_SSP_BBD, the SSP hub runs on the GPS chip as on the S8. To check"
+  ssp_sensors: accelerometer, barometer, grip, gyro, hrm, light, magnetic, proximity, thermistor (sysfs ssp_sensor under LineageOS)
+
+wifi:
+  chip: Broadcom BCM4361 rev B2 (bcmdhd over PCIe; firmware names *_b2)
+  firmware: "/vendor/firmware: bcmdhd_sta.bin_b2, nvram.txt_r02a_b2 / r02b_b2 / murata_r041_b2, bcmdhd_clm.blob. Which nvram the driver picks: to check"
+
+quirks:
+  - "the ROM rewrites RECOVERY at boot (persist.vendor.recovery_update=true): set it to false before flashing PhoneKit"
+  - "the ROM spoofs ro.build.type, ro.debuggable and the bootloader lock props; adb root works anyway"
+  - "DTB/DTBO partitions are empty; the DT table (DTBH, 305152 B) is inside boot and recovery"
+  - "no devtmpfs in the ROM kernel (like the S8's TWRP kernel): paneld creates the /dev memory nodes itself"
+  - "USB config must be named 'Conf 1': configfs.c is_symboliclink_change_mode() treats other names as a GSI image, and the first mode switch left only the ACM ports (dmesg 'ADB Only mode for recovery or VTS test'). hw.c usb_config_name"
+  - "HP_GOV caps the big cluster at 1794 MHz with 4 big cores online; paneld's restore reads back 1794000, not cpuinfo_max 2314000"
+  - "virt-manager (SPICE USB auto-redirect) on the test PC grabbed the phone at every re-enumeration (docs/recovery.md)"
+
+milestones:
+  M0: confirmed 2026-11-19   # prebuilt LineageOS 23.2 kernel: PHONEBOX dashboard on the first boot
+  M3: confirmed 2026-11-19   # test-display 5/5
+  M2: confirmed 2026-11-19   # test-touch 10/10, 4 rotations
+  M4: confirmed 2026-11-19   # test-power 12/12
+  M5: confirmed 2026-11-19   # test-usb 11/11 (after usb_config_name "Conf 1")
+  M6b: confirmed 2026-11-19  # MOUSE, KEYBOARD, COMBO (test-input-modes 16/16)
+  M6: partial 2026-11-19     # SCREEN: GUD state + frames and HID touch pass test-usb; not yet seen by eye on a desktop
+  M6e: partial 2026-11-19    # manual rotation in all 4 orientations; auto-rotate untested (SSP on the GPS chip, like the S8)
+  M7: confirmed 2026-11-19   # test-panel 21/21 (PPJ/1 over the USB network)
+  M12b: confirmed 2026-11-19 # test-phonebox 9/9 with the stock agent over USB

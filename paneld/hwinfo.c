@@ -4,6 +4,7 @@
 #include "paneld.h"
 
 #include <stdio.h>
+#include <string.h>
 
 void hw_hint_mode(char *b, size_t len) { snprintf(b, len, "%s: NEXT MODE  HOLD: MENU", phone.mode_key.label); }
 
@@ -29,6 +30,8 @@ void hw_print_config(void) {
     else printf("page_key (none: hold Vol Up/Down for pages)\n");
     printf("usb %s\n", usb[phone.usb]);
     printf("sensor_hub_on %s\n", phone.sensor_hub_on[0] ? phone.sensor_hub_on : "(none: the kernel powers the hub)");
+    /* printed only when set, so the phones on the default keep their reference files */
+    if (strcmp(phone.usb_config_name, "phonepanel")) printf("usb_config_name %s\n", phone.usb_config_name);
     hw_hint_mode(b, sizeof b); printf("hint_status_1 %s\n", b);
     hw_hint_page(b, sizeof b); printf("hint_status_2 %s\n", b);
     hw_hint_trackpad(b, sizeof b); printf("hint_trackpad %s\n", b);

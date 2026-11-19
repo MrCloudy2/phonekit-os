@@ -58,6 +58,9 @@ def main():
         pp("touch", "tap", 540, 2000); time.sleep(0.6)
         s = power()
         check("touch wakes from dim", s["state"] == "active" and s["backlight"] == s["bright"], f"state={s['state']} backlight={s['backlight']} (configured {s['bright']})")
+        # The kernel may hold the max below cpuinfo_max_freq on its own (Exynos 9810: the hotplug governor allows
+        # 2314 MHz only with 1-2 big cores online, else 1794), so note what it allowed before paneld capped.
+        awake_max = pp("sh", "cat /sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq").strip()
         time.sleep(10.5)
         s = power()
         check("idle -> off (blanked)", s["state"] == "off" and "blanked 1" in pp("fstats"), f"state={s['state']}")
@@ -70,7 +73,8 @@ def main():
         check("host wake < 300 ms (unblank)", s["state"] == "active" and 0 <= int(s["last_wake_ms"]) < 300,
               f"unblank took {s['last_wake_ms']} ms (round trip {rt:.0f} ms)")
         cpu4 = pp("sh", "cat /sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq").strip()
-        check("CPU caps lifted on wake", cpu4 == fmax, f"big-cluster max = {cpu4} (cpuinfo max {fmax})")
+        check("CPU caps lifted on wake", cpu4 in (fmax, awake_max),
+              f"big-cluster max = {cpu4} (cpuinfo max {fmax}, before screen-off {awake_max})")
         setp("dim_after_s", 0); setp("off_after_s", 0)  # stay on for the rest
 
         print("== charge limiter")
@@ -105,6 +109,9 @@ def main():
         # power-measure.sh uses slate mode; keep the limiter at "charging off" so its 30 s re-assert agrees with it
         # (on slate-mode phones the limiter's own switch IS batt_slate_mode)
         cap = int(power("tick")["battery_pct"]); setp("charge_lo", max(cap - 10, 0)); setp("charge_hi", max(cap - 5, 1)); power("tick")
+        # Fixed, bright screen content: on OLED panels the draw depends on the picture (a dark PHONEBOX page made
+        # "active" read barely above "dim" on the Galaxy S9+), so every phone measures the same test pattern.
+        pp("pattern")
         setp("bright", 128); mw_on = measure("active, backlight 128")
         setp("bright", 12); mw_dim = measure("dim, backlight 12")
         setp("bright", 128); power("off"); mw_off = measure("off (blanked, CPUs capped)")
