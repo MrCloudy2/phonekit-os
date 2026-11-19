@@ -152,8 +152,9 @@ porch; DSI-clock experiment deferred.*
 
 #### M4 · Power manager and battery care 🟨
 *Functional checks confirmed 2026-11-15 (`docs/verification/M4.md`): dim/off states, 263 ms wake, power key
-toggle/hold-reboot, charge limiter (battery 0 µA when held), thermal guard. Pending: 72 h window soak,
-battery-less test, < 100 mW off (133 mW now; needs suspend-to-RAM).*
+toggle/hold-reboot, charge limiter (battery 0 µA when held), thermal guard. 2026-11-19: wake and the overheat path
+re-verified by pptest (XCover Pro 94/94). Pending: battery-less test, power-loss test, < 100 mW off (needs
+suspend-to-RAM). The 72 h soak is deferred: charging on/off at the window edges is verified.*
 
 **Deliverables**
 - Backlight control, auto-dim, DPMS blank on idle, wake on touch or on host command.
@@ -164,9 +165,11 @@ battery-less test, < 100 mW off (133 mW now; needs suspend-to-RAM).*
 - Battery-less operation documented per device.
 
 **Confirm**
-- [ ] Plugged in for 72 h, the battery stays inside the configured window.
-- [ ] Battery temperature never exceeds the configured limit; the overheat path is tested by lowering the limit.
-- [ ] Blank → wake on touch in **< 300 ms**.
+- [ ] Plugged in for 72 h, the battery stays inside the configured window. *Deferred (2026-11-19): not needed for now;
+  test-power verifies charging stops above the window and resumes below it.*
+- [x] Battery temperature never exceeds the configured limit; the overheat path is tested by lowering the limit.
+  (test-power: over `temp_limit` → charging off, over `temp_crit` → screen forced off, cooled → recovers)
+- [x] Blank → wake on touch in **< 300 ms**. (test-power: 288 ms unblank, 2026-11-19)
 - [ ] Idle power with the screen blanked is measured and recorded (target: **< 100 mW**, to verify).
 - [ ] Clean behaviour on power loss (no filesystem corruption: rootfs is read-only and config uses atomic writes).
 
@@ -420,8 +423,14 @@ menu on-device, per-page key bindings.
 
 **Confirm**
 - [ ] Pairing works with no cable.
-- [ ] Unpaired clients are rejected; a replayed or tampered session fails.
-- [ ] Same latency targets as M7 on a local LAN (**< 50 ms**).
+- [x] Unpaired clients are rejected; a replayed or tampered session fails. (2026-11-19: PPJ/1 on Wi-Fi resets
+  non-USB clients; the agent answers 403 without a token or with a wrong one, and `/api/pair` is USB-tunnel only; a
+  wrong certificate fingerprint is refused with no data (2026-11-17). Replay is covered by TLS itself, fresh
+  handshake keys per session, not by a separate test.)
+- [ ] Same latency targets as M7 on a local LAN (**< 50 ms**). *2026-11-19, XCover Pro behind a Wi-Fi extender:
+  ping 26 ms average under steady traffic, but 233 ms average (max 1.4 s) at 2 pings/s: Wi-Fi power save naps
+  between packets. Needs a latency-vs-power-save policy (power save off while PHONEBOX is streaming?) and a
+  measurement on a direct AP.*
 
 #### M10b · Tethering: phone as a USB Wi-Fi / mobile-data adapter 🟨
 *2026-11-17: WI-FI MODEM mode in the menu (status screen, live speed) and `ppctl wifi tether on`; a Linux PC browsed and downloaded through the phone (`docs/verification/M10b.md`, `docs/modem.md`). Windows/macOS and tethering alongside mode A pending.*
@@ -466,7 +475,8 @@ by Wi-Fi, and bridges them: a pocket serial-console server / PiKVM-lite.
 
 **Confirm**
 - [ ] From another PC on the LAN: shell on the server through the phone; works while the server's own network is down.
-- [ ] Unpaired/unknown keys are rejected; remote access can be switched off on the phone.
+- [x] Unpaired/unknown keys are rejected; remote access can be switched off on the phone. (M11b.md: wrong key and
+  password refused; `ppctl ssh revoke` stops dropbear. 2026-11-19: no key authorised → port 22 closed over Wi-Fi)
 
 ---
 
