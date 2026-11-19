@@ -22,6 +22,16 @@ long now_ms(void);
 long now_us(void);
 int write_file(const char *path, const char *s);
 int read_file(const char *path, char *buf, size_t len); /* NUL-terminated, trailing newline stripped */
+/* USB plan mode (util.c, gadget_plan): filesystem calls of the gadget code, redirected and logged */
+extern int plan_mode;
+void plan_set_root(const char *root);
+const char *plan_path(const char *p, char *buf, size_t len);
+void plan_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+int pl_mkdir(const char *p);
+int pl_symlink(const char *src, const char *dst);
+int pl_unlink(const char *p);
+int pl_access(const char *p, int mode);
+int gadget_plan(void); /* PANELD_PRINT_USB_PLAN=1: print the gadget paneld builds at boot and per USB mode */
 
 /* fb.c */
 struct fb {

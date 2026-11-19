@@ -23,7 +23,7 @@ BUSYBOX ?= $(wildcard $(CURDIR)/out/busybox/busybox)
 
 IMG := $(OUT)/phonepanel.img
 
-.PHONY: all import flash deploy update logs test check-all config-check clean FORCE
+.PHONY: all import flash deploy update logs test check-all config-check clean FORCE footprint-check footprint-update
 all: $(IMG)
 
 import:
@@ -104,6 +104,16 @@ config-check: $(OUT)/paneld
 
 config-update: $(OUT)/paneld
 	PANELD_PRINT_CONFIG=1 qemu-aarch64-static $(OUT)/paneld > $(DEVDIR)/paneld-config.txt
+
+# What the repo puts on the phone and how (scripts/footprint.py): build settings, kernel config, image contents,
+# flash layout, the USB gadget per mode. CI compares it for every device: another phone's file changing in your diff
+# means your change reaches that phone.
+footprint-check: $(OUT)/paneld
+	scripts/footprint.py $(device) $(OUT)/paneld | diff -u $(DEVDIR)/footprint.txt - \
+	    || { echo "footprint changed on $(device): check the diff, then make device=$(device) footprint-update"; exit 1; }
+
+footprint-update: $(OUT)/paneld
+	scripts/footprint.py $(device) $(OUT)/paneld > $(DEVDIR)/footprint.txt
 
 $(OUT):
 	mkdir -p $@

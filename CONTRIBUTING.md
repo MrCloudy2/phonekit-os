@@ -34,12 +34,16 @@ Three layers, cheapest first:
 1. **Design.** What paneld does differently per phone lives in `devices/<dev>/hw.c` (fields in `paneld/hw.h`; see
    the porting guide, "The hardware layer"). A new field's default in `HW_DEFAULTS` is the old behaviour, so other
    phones don't move. No `#ifdef <phone>`, and no guessing the phone type at runtime.
-2. **CI, no hardware.** Every device builds, starts under qemu, and prints what paneld does on it
-   (`make device=<dev> config-check` against `devices/<dev>/paneld-config.txt`). If your diff changes another
-   phone's file, you changed that phone. Say why in the PR, or fix it.
-3. **Hardware.** `make check-all` runs `scripts/pptest.py` on every connected phone against its
-   `pptest-baseline.txt` and fails on any regression. Paste `out/check-all.md` into the PR. Maintainers run it on
-   their phones before merging, and a regression on any phone blocks the merge.
+2. **CI, no hardware.** Every device builds, starts under qemu, and CI compares two files per phone:
+   `devices/<dev>/paneld-config.txt` (what paneld does on it) and `devices/<dev>/footprint.txt` (what goes onto it and
+   how: build settings, kernel config, image contents, flash layout, and the USB gadget paneld builds at boot and per
+   mode, from `PANELD_PRINT_USB_PLAN`). If your diff changes another phone's file, your change reaches that phone. Say
+   why in the PR, or make it opt-in through `hw.c`. `make device=<dev> config-update footprint-update` refreshes them.
+3. **Hardware, for the phones you have.** `make check-all` runs `scripts/pptest.py` on every connected phone against
+   its `pptest-baseline.txt` and fails on any regression. Paste `out/check-all.md` into the PR. Nobody owns every
+   phone: you don't owe runs on phones you don't have. Each phone's owner re-verifies on their own schedule, and
+   `docs/devices.md` shows the commit each phone last passed at ("Verified at"). Build that commit if you want an image
+   that was tested on your phone.
 
 After a verified run with new passes, refresh the baseline: `scripts/ppregress.py <device> --update`.
 

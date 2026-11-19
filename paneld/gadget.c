@@ -82,7 +82,8 @@ static void serial_from_cmdline(char *out, size_t len) {
 }
 
 static int first_udc(char *out, size_t len) {
-    DIR *d = opendir("/sys/class/udc");
+    char pb[256];
+    DIR *d = opendir(plan_path("/sys/class/udc", pb, sizeof pb));
     if (!d) return -1;
     struct dirent *e;
     int ok = -1;
@@ -101,7 +102,7 @@ static const char *make_function(const char *const *names, int n) {
     for (int i = 0; i < n; i++) {
         char p[128];
         snprintf(p, sizeof p, G "/functions/%s", names[i]);
-        if (mkdir(p, 0755) == 0 || errno == EEXIST) return names[i];
+        if (pl_mkdir(p) == 0 || errno == EEXIST) return names[i];
     }
     return NULL;
 }
@@ -110,7 +111,7 @@ static int link_function(const char *fn) {
     char src[128], dst[128];
     snprintf(src, sizeof src, G "/functions/%s", fn);
     snprintf(dst, sizeof dst, CFG "/%s", fn);
-    if (symlink(src, dst) < 0 && errno != EEXIST) {
+    if (pl_symlink(src, dst) < 0 && errno != EEXIST) {
         logmsg("usb: link %s: %s", fn, strerror(errno));
         return -1;
     }
@@ -150,7 +151,7 @@ static int udc_bind(void) {
 static void unlink_function(const char *fn) {
     char dst[128];
     snprintf(dst, sizeof dst, CFG "/%s", fn);
-    unlink(dst);
+    pl_unlink(dst);
 }
 
 /* ---------------------------------------------------------------- HID digitizer */
@@ -213,7 +214,9 @@ static int make_hid(const char *const *names, int nn, const char **fn_out, int s
     snprintf(rel, sizeof rel, "functions/%s/report_length", fn); snprintf(v, sizeof v, "%d", report_len); wr(rel, v);
     char p[160];
     snprintf(p, sizeof p, G "/functions/%s/report_desc", fn);
-    int fd = open(p, O_WRONLY | O_CLOEXEC);
+    char pb[256];
+    plan_log("write %s = (%zu-byte report descriptor)", p, n);
+    int fd = open(plan_path(p, pb, sizeof pb), O_WRONLY | O_CLOEXEC | (plan_mode ? O_CREAT : 0), 0644);
     if (fd < 0 || write(fd, desc, n) != (ssize_t)n) {
         logmsg("usb: hid report_desc %s: %s", fn, strerror(errno));
         if (fd >= 0) close(fd);
@@ -317,6 +320,7 @@ static void ncm_net_up(void) {
     read_file(p, ifname, sizeof ifname);
     snprintf(net_if, sizeof net_if, "%s", ifname);
     net_bound_ms = now_ms();
+    if (plan_mode) { plan_log("net %s 10.42.0.2/24 up, DHCP server for the host", ifname); return; }
     if (access("/bin/busybox", X_OK) != 0) { logmsg("usb: no busybox: %s left unconfigured", ifname); return; }
     char *up[] = {"/bin/busybox", "ifconfig", ifname, "10.42.0.2", "netmask", "255.255.255.0", "up", NULL};
     run_quiet(up);
@@ -368,7 +372,7 @@ static int setup_ncm(void) {
 int gadget_setup(char ttys[GADGET_PORTS][64], struct fb *f) {
     const size_t ttylen = 64;
     char serial[64], buf[64];
-    if (access("/config/usb_gadget", F_OK) < 0) {
+    if (pl_access("/config/usb_gadget", F_OK) < 0) {
         logmsg("usb: no configfs usb_gadget (is /config mounted?)");
         return -1;
     }
@@ -378,7 +382,7 @@ int gadget_setup(char ttys[GADGET_PORTS][64], struct fb *f) {
     }
     serial_from_cmdline(serial, sizeof serial);
 
-    mkdir(G, 0755);
+    pl_mkdir(G);
     udc_unbind();
     wr("idVendor", "0x1d6b");  /* Linux Foundation */
     wr("idProduct", "0x0104"); /* Multifunction Composite Gadget */
@@ -387,12 +391,12 @@ int gadget_setup(char ttys[GADGET_PORTS][64], struct fb *f) {
     wr("bDeviceClass", "0xEF"); /* misc / IAD, so hosts bind per function */
     wr("bDeviceSubClass", "0x02");
     wr("bDeviceProtocol", "0x01");
-    mkdir(G "/strings/0x409", 0755);
+    pl_mkdir(G "/strings/0x409");
     wr("strings/0x409/manufacturer", "phonepanel");
     wr("strings/0x409/product", "phonepanel");
     wr("strings/0x409/serialnumber", serial);
-    mkdir(CFG, 0755);
-    mkdir(CFG "/strings/0x409", 0755);
+    pl_mkdir(CFG);
+    pl_mkdir(CFG "/strings/0x409");
     wr("configs/c.1/strings/0x409/configuration", phone.usb_config_name);
     wr("configs/c.1/MaxPower", "500");
 
@@ -425,7 +429,7 @@ int gadget_setup(char ttys[GADGET_PORTS][64], struct fb *f) {
         if (read_file(p, buf, sizeof buf) > 0) port = atoi(buf);
         snprintf(name, sizeof name, "ttyGS%d", port);
         snprintf(ttys[k], ttylen, "/dev/%s", name);
-        for (int i = 0; i < 20 && access(ttys[k], F_OK) < 0; i++) {
+        for (int i = 0; !plan_mode && i < 20 && access(ttys[k], F_OK) < 0; i++) {
             ensure_node("tty", name, ttys[k]);
             usleep(50000);
         }
@@ -477,7 +481,7 @@ int gadget_set_mode(char m) {
     if (net) { if (net_heals >= 3) net_heals = 0; ncm_net_up(); }
     if (m == 'A' && hid_fn) {
         char p[32];
-        for (int i = 0; i < 20 && access("/dev/hidg0", F_OK) < 0; i++) {
+        for (int i = 0; !plan_mode && i < 20 && access("/dev/hidg0", F_OK) < 0; i++) {
             ensure_node("hidg", "hidg0", "/dev/hidg0");
             usleep(50000);
         }
@@ -564,4 +568,35 @@ int gadget_reconnect(int off_ms) {
     if (write_file(p, "disconnect") < 0) return -1;
     usleep(off_ms * 1000);
     return write_file(p, "connect");
+}
+
+/* PANELD_PRINT_USB_PLAN=1 (CI, scripts/footprint.py): run the real gadget setup and both USB modes against a
+   temporary directory with an empty configfs, one UDC and (for HW_USB_SAMSUNG_COMPOSITE) the android0 files, and
+   print every filesystem operation. FunctionFS isn't mounted (adb counts as ready, GUD needs a framebuffer and is
+   left out), the USB network isn't configured. What a phone's kernel accepts (configfs function names, Samsung's
+   composite rules) isn't simulated: this shows what paneld asks for, so a change to it shows up per phone. */
+int gadget_plan(void) {
+    char root[] = "/tmp/paneld-plan-XXXXXX", p[160];
+    if (!mkdtemp(root)) { perror("mkdtemp"); return 1; }
+    const char *dirs[] = {"/config", "/config/usb_gadget", "/sys", "/sys/class", "/sys/class/udc", "/sys/class/udc/UDC",
+                          "/sys/class/android_usb", "/sys/class/android_usb/android0", NULL};
+    for (int i = 0; dirs[i]; i++) {
+        if (!is_samsung_composite() && strstr(dirs[i], "android_usb")) continue;
+        snprintf(p, sizeof p, "%s%s", root, dirs[i]);
+        mkdir(p, 0755);
+    }
+    plan_set_root(root);
+    char ttys[GADGET_PORTS][64];
+    printf("# boot (stored usb_mode %s)\n", store_get("usb_mode", "B"));
+    int rc = gadget_setup(ttys, NULL);
+    printf("# switch to mode A\n");
+    gadget_set_mode('A');
+    printf("# switch to mode B\n");
+    gadget_set_mode('B');
+    fflush(stdout);
+    char *rm[] = {"/bin/rm", "-rf", root, NULL};
+    plan_mode = 0;
+    if (fork() == 0) { execv(rm[0], rm); _exit(127); }
+    wait(NULL);
+    return rc < 0 ? 1 : 0;
 }
