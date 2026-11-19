@@ -21,9 +21,21 @@
 
 static void early_setup(void) {
     if (getpid() != 1) return; /* running as a normal program (testing) */
-    mount("devtmpfs", "/dev", "devtmpfs", 0, NULL);
+    int devtmpfs = mount("devtmpfs", "/dev", "devtmpfs", 0, NULL) == 0;
     mount("proc", "/proc", "proc", 0, NULL);
     mount("sysfs", "/sys", "sysfs", 0, NULL);
+    if (!devtmpfs) {
+        /* No devtmpfs in this kernel (e.g. the Galaxy S8's TWRP kernel): /dev only has what we create. Other
+           nodes are made on demand (ensure_node), but tools need the memory devices up front: wpa_supplicant
+           can't do a WPA handshake without /dev/urandom. */
+        static const char *const mem[] = {"null", "zero", "full", "random", "urandom", "kmsg"};
+        for (unsigned i = 0; i < sizeof mem / sizeof *mem; i++) {
+            char path[32];
+            snprintf(path, sizeof path, "/dev/%s", mem[i]);
+            ensure_node("mem", mem[i], path);
+            if (strcmp(mem[i], "kmsg")) chmod(path, 0666);
+        }
+    }
     mount("tmpfs", "/tmp", "tmpfs", 0, "mode=1777");
     mount("tmpfs", "/run", "tmpfs", 0, "mode=0755");
     mount("configfs", "/config", "configfs", 0, NULL);
@@ -43,8 +55,10 @@ static void early_setup(void) {
 /* Mode A: forward the phone's touches to the host as a USB HID touchscreen. */
 static void send_hid_touch(void) {
     static int hid_fd = -1;
+    static unsigned hid_gen;
     wd_phase("hid:open");
-    if (hid_fd < 0) hid_fd = open("/dev/hidg0", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+    if (hid_fd >= 0 && hid_gen != gadget_bind_gen()) { close(hid_fd); hid_fd = -1; } /* rebind: the node may be new */
+    if (hid_fd < 0) { hid_fd = open("/dev/hidg0", O_WRONLY | O_NONBLOCK | O_CLOEXEC); hid_gen = gadget_bind_gen(); }
     wd_phase("hid:build");
     if (hid_fd < 0) return;
     int ids[10], xs[10], ys[10], down[10];

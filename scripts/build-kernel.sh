@@ -8,6 +8,7 @@
 #   KERNEL_DEFCONFIG  base defconfig
 #   KERNEL_FRAGMENTS  config fragments (relative to devices/<device>/), merged on top
 #   KERNEL_DTB_GLOB   glob (in the build's arch/arm64/boot/dts) of DTBs to concatenate into dtb
+#   KERNEL_MAKE_FLAGS extra make variables for this tree (e.g. toolchain overrides an old Makefile needs)
 # Output: build/kernel-<device>/ (objects), out/<device>/kernel/{Image,dtb,config}
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -22,6 +23,7 @@ src=$root/third_party/$(getvar KERNEL_SRC)
 defconfig=$(getvar KERNEL_DEFCONFIG)
 fragments=${KERNEL_FRAGMENTS-$(getvar KERNEL_FRAGMENTS)}  # env overrides device.mk
 dtbglob=$(getvar KERNEL_DTB_GLOB)
+read -r -a makeflags <<< "$(getvar KERNEL_MAKE_FLAGS)"
 [[ -d $src ]] || { echo "no kernel source at $src (scripts/fetch.sh kernel)" >&2; exit 1; }
 
 obj=$root/build/kernel-$device
@@ -43,7 +45,7 @@ kmake() {
     make -C "$src" O="$obj" ARCH=arm64 \
         CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
         STRIP=llvm-strip CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- \
-        KCFLAGS="${KCFLAGS:-}" -j"$(nproc)" "$@"
+        KCFLAGS="${KCFLAGS:-}" "${makeflags[@]}" -j"$(nproc)" "$@"
 }
 
 kmake "$defconfig"

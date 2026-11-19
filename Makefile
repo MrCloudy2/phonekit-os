@@ -39,6 +39,8 @@ $(BEARSSL):
 $(OUT)/paneld: $(PANELD_SRC) $(OUT)/fonts.c paneld/paneld.h $(BEARSSL) FORCE | $(OUT)
 	$(CROSS_CC) $(CFLAGS) -Iout/bearssl/inc -D_GNU_SOURCE -static -s -DPP_VERSION='"$(VERSION)"' \
 	    -DPP_STORE_PART='"$(TARGET_PARTITION_NAME)"' -DPP_FB_SWAP_RB=$(or $(FB_SWAP_RB),0) \
+	    -DPP_CHARGE_CTL='"$(or $(CHARGE_CTL),charging_enabled)"' -DPP_CHARGE_CTL_INVERT=$(or $(CHARGE_CTL_INVERT),0) \
+	    -DPP_MODE_KEY_LABEL='"$(or $(MODE_KEY_LABEL),XCOVER)"' -DPP_PAGE_KEY_LABEL='"$(if $(filter undefined,$(origin PAGE_KEY_LABEL)),TOP,$(PAGE_KEY_LABEL))"' \
 	    -DPP_AUTOREBOOT_SECS=$(PP_AUTOREBOOT_SECS) -o $@.tmp $(PANELD_SRC) $(OUT)/fonts.c $(BEARSSL) -lm
 	@cmp -s $@.tmp $@ && rm $@.tmp || mv $@.tmp $@
 

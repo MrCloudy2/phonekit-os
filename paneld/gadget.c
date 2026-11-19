@@ -9,6 +9,13 @@
 //   Mode B "smart":   NCM network (phone 10.42.0.2/24, DHCP for the host)
 // Switching = unbind UDC, relink the mode functions, bind again. The ACM instances
 // stay, so their ttyGS ports survive (open fds get a hangup and are reopened).
+//
+// Samsung composite kernels (CONFIG_USB_CONFIGFS_UEVENT + ANDROID_SAMSUNG_COMPOSITE, e.g. Galaxy S8 /
+// Exynos 8895, detected at runtime by /sys/class/android_usb/android0/functions): a configfs link only parks
+// the function; it joins the config when its name is written to android0/functions, and android0/enable
+// binds and connects. Writing UDC alone binds an empty config (-EINVAL, "needs at least one function").
+// After enable=0 the functions are parked again and can't be unlinked (kernel WARN, function leaks), so
+// on these kernels functions are unlinked while still bound, then the gadget is disabled.
 #include "paneld.h"
 
 #include <dirent.h>
@@ -28,6 +35,36 @@
 static char udc[64];
 static char mode = 0; /* 'A' or 'B' once set up */
 static const char *hid_fn, *ncm_fn; /* ncm_fn: the mode-B network function (RNDIS or NCM) */
+
+#define SAMSUNG_USB "/sys/class/android_usb/android0"
+static int samsung_composite = -1; /* -1 = not probed yet */
+static char samsung_fns[256];      /* function names in link order, for android0/functions */
+static const char *acm_fns[GADGET_PORTS]; /* the ACM instances that exist (log, ctl, shell) */
+
+static int is_samsung_composite(void) {
+    if (samsung_composite < 0) {
+        samsung_composite = access(SAMSUNG_USB "/functions", W_OK) == 0;
+        if (samsung_composite) logmsg("usb: Samsung composite gadget (android0/functions + enable)");
+    }
+    return samsung_composite;
+}
+
+/* configfs function dir -> the name Samsung's make_usb_func_link matches: "acm.gs0" -> "acm",
+   "rndis.usb0" -> "rndis". Samsung's f_fs.c names EVERY FunctionFS function "adb" (ffs.adb and ffs.gud alike),
+   so any "ffs.*" maps to "adb"; paneld links only the FunctionFS functions the mode needs, so that's exact.
+   Duplicates are dropped. */
+static void samsung_fn_add(const char *fn) {
+    char name[64];
+    const char *dot = strchr(fn, '.');
+    if (!dot) snprintf(name, sizeof name, "%s", fn);
+    else if (!strncmp(fn, "ffs.", 4)) snprintf(name, sizeof name, "adb");
+    else snprintf(name, sizeof name, "%.*s", (int)(dot - fn), fn);
+    size_t nl = strlen(name);
+    for (const char *p = samsung_fns; (p = strstr(p, name)); p += nl)
+        if ((p == samsung_fns || p[-1] == ',') && (p[nl] == ',' || !p[nl])) return;
+    size_t l = strlen(samsung_fns);
+    snprintf(samsung_fns + l, sizeof samsung_fns - l, "%s%s", l ? "," : "", name);
+}
 
 static int wr(const char *rel, const char *val) {
     char p[256];
@@ -83,6 +120,36 @@ static int link_function(const char *fn) {
         logmsg("usb: link %s: %s", fn, strerror(errno));
         return -1;
     }
+    samsung_fn_add(fn);
+    return 0;
+}
+
+static void udc_unbind(void) {
+    if (is_samsung_composite()) { write_file(SAMSUNG_USB "/enable", "0"); return; }
+    wr("UDC", "\n");
+}
+
+static unsigned bind_gen;
+unsigned gadget_bind_gen(void) { return bind_gen; }
+
+static int udc_bind(void) {
+    /* Only Samsung's composite layer recreates /dev/hidgN on a rebind. Elsewhere (XCover Pro) the HID fds stay valid
+       and are kept open, as before the S8 port: closing an f_hid node and reopening it right after a rebind locked
+       up the XCover Pro's 4.14 kernel during the MOUSE tests (2026-11-19). */
+    if (!is_samsung_composite()) return wr("UDC", udc);
+    bind_gen++;
+    /* the same sequence as Samsung's own init (TWRP init.recovery.usb.rc): enable 0, functions, UDC, enable 1 */
+    write_file(SAMSUNG_USB "/enable", "0");
+    if (write_file(SAMSUNG_USB "/functions", samsung_fns) < 0) {
+        logmsg("usb: write android0/functions=%s: %s", samsung_fns, strerror(errno));
+        return -1;
+    }
+    wr("UDC", udc); /* fails harmlessly if enable binds on its own */
+    if (write_file(SAMSUNG_USB "/enable", "1") < 0) {
+        logmsg("usb: write android0/enable=1: %s", strerror(errno));
+        return -1;
+    }
+    logmsg("usb: Samsung composite: functions %s, enabled", samsung_fns);
     return 0;
 }
 
@@ -318,7 +385,7 @@ int gadget_setup(char ttys[GADGET_PORTS][64], struct fb *f) {
     serial_from_cmdline(serial, sizeof serial);
 
     mkdir(G, 0755);
-    wr("UDC", "\n");
+    udc_unbind();
     wr("idVendor", "0x1d6b");  /* Linux Foundation */
     wr("idProduct", "0x0104"); /* Multifunction Composite Gadget */
     wr("bcdDevice", "0x0100");
@@ -338,7 +405,7 @@ int gadget_setup(char ttys[GADGET_PORTS][64], struct fb *f) {
     const char *names[GADGET_PORTS][3] = {{"acm.gs0", "acm.gs5", "acm.usb0"},
                                           {"acm.gs1", "acm.gs6", "acm.usb1"},
                                           {"acm.gs2", "acm.gs7", "acm.usb2"}};
-    const char *fns[GADGET_PORTS] = {NULL};
+    const char **fns = acm_fns;
     for (int k = 0; k < GADGET_PORTS; k++) {
         ttys[k][0] = 0;
         fns[k] = make_function(names[k], 3);
@@ -354,7 +421,7 @@ int gadget_setup(char ttys[GADGET_PORTS][64], struct fb *f) {
     if (adbd_init(G) < 0) logmsg("usb: adb unavailable");
 
     const char *m = store_get("usb_mode", "B");
-    if (gadget_set_mode(m[0]) < 0 && wr("UDC", udc) < 0) return -1;
+    if (gadget_set_mode(m[0]) < 0 && udc_bind() < 0) return -1;
 
     for (int k = 0; k < GADGET_PORTS; k++) {
         if (!fns[k]) continue;
@@ -375,13 +442,16 @@ int gadget_setup(char ttys[GADGET_PORTS][64], struct fb *f) {
     return 0;
 }
 
+int gadget_has_hid(void) { return hid_fn != NULL; }
+
 /* Rewrites the host's DHCP offer (tethering on/off); the host picks it up at its next renewal or replug. */
 void gadget_dhcp_refresh(void) { if (mode == 'B' && ncm_fn) ncm_net_up(); }
 
 int gadget_set_mode(char m) {
     if (m != 'A' && m != 'B') return -1;
     long t0 = now_ms();
-    wr("UDC", "\n"); /* unbind: host sees a disconnect */
+    int samsung = is_samsung_composite();
+    if (!samsung) udc_unbind(); /* unbind: host sees a disconnect */
     if (hid_fn) unlink_function(hid_fn);
     if (mouse_fn) unlink_function(mouse_fn);
     if (kbd_fn) unlink_function(kbd_fn);
@@ -389,6 +459,10 @@ int gadget_set_mode(char m) {
     if (ncm_fn) unlink_function(ncm_fn);
     unlink_function("ffs.gud");
     unlink_function("ffs.adb");
+    if (samsung) udc_unbind(); /* after the unlinks: see the top of this file */
+    samsung_fns[0] = 0;        /* the ACM ports stay linked, and come first */
+    for (int k = 0; k < GADGET_PORTS; k++)
+        if (acm_fns[k]) samsung_fn_add(acm_fns[k]);
     /* the host's gud driver binds to vendor interfaces on 1d50:614d (the GUD USB ID) */
     /* Mode B (PHONEBOX) carries adb: present the generic "rndis,adb" Android ID (as postmarketOS/PinePhone do)
      * so stock udev rules give the user's adb access without extra setup. */
@@ -404,7 +478,7 @@ int gadget_set_mode(char m) {
     int net = ncm_fn && (m == 'B' || hm_input_mode() == IN_RESCUE); /* RESCUE: USB network to the server too */
     if (net) link_function(ncm_fn);
     if (with_adb) link_function("ffs.adb");
-    if (wr("UDC", udc) < 0) return -1;
+    if (udc_bind() < 0) return -1;
     mode = m;
     if (net) { if (net_heals >= 3) net_heals = 0; ncm_net_up(); }
     if (m == 'A' && hid_fn) {

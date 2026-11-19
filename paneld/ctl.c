@@ -148,6 +148,9 @@ static void cmd_info(struct app *a) {
     for (int i = 0; i < a->nin; i++)
         n += snprintf(buf + n, sizeof buf - n, "input %s %s%s%s\n", a->in[i].node, a->in[i].name,
                       a->in[i].is_touch ? " touch" : "", a->in[i].has_power ? " power" : "");
+    char kp[96];
+    keys_present(kp, sizeof kp);
+    n += snprintf(buf + n, sizeof buf - n, "keys %s\n", kp);
     const char *ps[] = {"capacity", "status", "temp", "voltage_now", "current_now"};
     for (unsigned i = 0; i < sizeof ps / sizeof *ps; i++) {
         char p[128];
@@ -508,6 +511,10 @@ static void dispatch(struct app *a, char *l, size_t len) {
         static char b2[4096];
         data(b2, (size_t)pb_hits(b2, sizeof b2));
         ok(NULL);
+    } else if (!strcmp(c, "phonebox") && argc > 2 && !strcmp(argv[1], "mute")) {
+        pb_agent_muted = atoi(argv[2]) != 0;
+        logmsg("phonebox: agent %s", pb_agent_muted ? "muted (test mode)" : "unmuted");
+        ok(NULL);
     } else if (!strcmp(c, "phonebox") && argc > 2 && !strcmp(argv[1], "page")) {
         if (pb_page_set(atoi(argv[2])) < 0) err("no such phonebox page"); else ok(NULL);
     } else if (!strcmp(c, "deck")) {
@@ -584,7 +591,7 @@ static void dispatch(struct app *a, char *l, size_t len) {
             return;
         }
         char b[96];
-        snprintf(b, sizeof b, "mode %c\nstate %s\n", gadget_mode(), gadget_state());
+        snprintf(b, sizeof b, "mode %c\nstate %s\nhid %s\n", gadget_mode(), gadget_state(), gadget_has_hid() ? "yes" : "no");
         data(b, strlen(b));
         ok(NULL);
     } else if (!strcmp(c, "store")) {

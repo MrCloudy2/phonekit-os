@@ -31,8 +31,14 @@ int hm_owner(void) {
 
 /* ---------------------------------------------------------------- HID output */
 
+/* Opens /dev/hidgN on first use, and again after every USB rebind (gadget_bind_gen): the old node may be gone. */
 static int hid_open(int *fd, const char *path) {
-    if (*fd < 0) *fd = open(path, O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+    static struct { int *fd; unsigned gen; } seen[4];
+    unsigned gen = gadget_bind_gen();
+    int i = 0;
+    while (i < 3 && seen[i].fd && seen[i].fd != fd) i++;
+    if (*fd >= 0 && seen[i].fd == fd && seen[i].gen != gen) { close(*fd); *fd = -1; }
+    if (*fd < 0) { *fd = open(path, O_WRONLY | O_NONBLOCK | O_CLOEXEC); seen[i].fd = fd; seen[i].gen = gen; }
     return *fd;
 }
 
@@ -163,7 +169,7 @@ static void draw_trackpad(void) {
     fb_text(fb, 60, 80, 6, "MOUSE", fb_color(fb, 210, 215, 230), bg);
     fb_text(fb, 60, 160, 3, "1 FINGER MOVE   TAP CLICK   2 FINGERS SCROLL", fg, bg);
     fb_text(fb, 60, 200, 3, "2-FINGER TAP RIGHT   3-FINGER TAP MIDDLE", fg, bg);
-    fb_text(fb, 60, 240, 3, "XCOVER: NEXT MODE   HOLD XCOVER: MENU", fg, bg);
+    fb_text(fb, 60, 240, 3, PP_MODE_KEY_LABEL ": NEXT MODE   HOLD " PP_MODE_KEY_LABEL ": MENU", fg, bg);
     int bz = fb->h - BTN_ZONE_H;
     fb_fill(fb, 0, bz, fb->w, 4, line);
     fb_fill(fb, fb->w / 2 - 2, bz, 4, BTN_ZONE_H, line);
@@ -522,13 +528,13 @@ void hm_menu_toggle(void) {
     redraw();
 }
 
-/* Keys while the menu is open: vol/top = move, xcover/power = select. Returns 1 if consumed. */
+/* Keys while the menu is open: vol/top = move, xcover/bixby/power = select. Returns 1 if consumed. */
 int hm_menu_key(int code) {
     if (settings_open && netui_active()) return netui_key(code);
     if (settings_open) {
         if (code == KEY_VOLUMEUP || code == KEY_MACRO17) set_sel = (set_sel + SET_N - 1) % SET_N;
         else if (code == KEY_VOLUMEDOWN) set_sel = (set_sel + 1) % SET_N;
-        else if (code == 0xfc || code == KEY_POWER) { set_step(set_sel, +1); return 1; }
+        else if (code == KEY_XCOVER || code == KEY_BIXBY || code == KEY_POWER) { set_step(set_sel, +1); return 1; }
         else return 0;
         draw_settings(); fb_present(fb);
         return 1;
@@ -536,7 +542,7 @@ int hm_menu_key(int code) {
     if (!menu_open) return 0;
     if (code == KEY_VOLUMEUP || code == KEY_MACRO17) menu_sel = (menu_sel + MENU_N - 1) % MENU_N;
     else if (code == KEY_VOLUMEDOWN) menu_sel = (menu_sel + 1) % MENU_N;
-    else if (code == 0xfc || code == KEY_POWER) { menu_choose(menu_sel); return 1; }
+    else if (code == KEY_XCOVER || code == KEY_BIXBY || code == KEY_POWER) { menu_choose(menu_sel); return 1; }
     else return 0;
     draw_menu();
     fb_present(fb);

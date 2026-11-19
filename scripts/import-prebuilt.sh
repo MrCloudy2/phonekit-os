@@ -5,7 +5,7 @@
 # usage: scripts/import-prebuilt.sh <device> <boot-or-recovery.img>
 #
 # Writes devices/<device>/prebuilt/:
-#   kernel, dtb, [recovery_dtbo], mkbootimg.args (header layout without the ramdisk),
+#   kernel, dtb or dt (Samsung legacy), [recovery_dtbo], mkbootimg.args (header layout without the ramdisk),
 #   source.txt (where it came from + sha256)
 set -euo pipefail
 
@@ -16,17 +16,26 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 devdir=$root/devices/$device
 [[ -d $devdir ]] || die "unknown device '$device' (no $devdir)"
 [[ -f $img ]] || die "no such image: $img"
-command -v unpack_bootimg >/dev/null || die "unpack_bootimg not found (install mkbootimg / android-tools)"
-
 dst=$devdir/prebuilt
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-args=$(unpack_bootimg --boot_img "$img" --out "$tmp" --format mkbootimg)
+# Samsung's legacy layout (header v0 + DTB section, Galaxy S7/S8/S9 era) isn't readable by unpack_bootimg;
+# scripts/samsung-bootimg.py unpacks and packs it, and mkimage.sh picks the packer from the args (--dt).
+if python3 "$root/scripts/samsung-bootimg.py" detect "$img"; then
+    echo "Samsung header v0 + DT image"
+    args=$(python3 "$root/scripts/samsung-bootimg.py" unpack "$img" "$tmp")
+else
+    command -v unpack_bootimg >/dev/null || die "unpack_bootimg not found (install mkbootimg / android-tools)"
+    args=$(unpack_bootimg --boot_img "$img" --out "$tmp" --format mkbootimg)
+fi
 [[ -s $tmp/kernel ]] || die "image has no kernel"
 
-rm -rf "$dst"; mkdir -p "$dst"
-for f in kernel dtb recovery_dtbo; do
+# Replace only what import produces: prebuilt/ also holds firmware/ (Wi-Fi blobs copied from the ROM) and other
+# local files that a re-import must not delete.
+mkdir -p "$dst"
+rm -f "$dst"/kernel "$dst"/dtb "$dst"/dt "$dst"/recovery_dtbo "$dst"/mkbootimg.args "$dst"/source.txt
+for f in kernel dtb dt recovery_dtbo; do
     [[ -s $tmp/$f ]] && cp "$tmp/$f" "$dst/$f"
 done
 

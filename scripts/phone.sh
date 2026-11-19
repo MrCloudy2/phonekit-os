@@ -38,7 +38,15 @@ wait_rom() {
     fi
 }
 
-part_sha() { adb exec-out "dd if=/dev/block/by-name/$1 bs=1M 2>/dev/null" | sha256sum | cut -d' ' -f1; }
+# Block device for a partition name. Older Samsung ROMs and their TWRP only have
+# /dev/block/platform/<storage>/by-name/ (e.g. Galaxy S8: 11120000.ufs).
+blk_of() {
+    local b
+    b=$(adb shell "for d in /dev/block/by-name/$1 /dev/block/platform/*/by-name/$1 /dev/block/bootdevice/by-name/$1; do [ -e \$d ] && { echo \$d; break; }; done" | tr -d '\r')
+    [[ -n $b ]] || die "no block device for partition '$1'"
+    echo "$b"
+}
+part_sha() { adb exec-out "dd if=$(blk_of "$1") bs=1M 2>/dev/null" | sha256sum | cut -d' ' -f1; }
 
 cmd=${1:-}; shift || true
 case $cmd in
@@ -47,7 +55,7 @@ flash)
     img=${1:?image}; part=${2:-$PART_DEFAULT}
     [[ -f $img ]] || die "no such image $img"
     wait_rom
-    blk=/dev/block/by-name/$part
+    blk=$(blk_of "$part")
     psize=$(adb shell blockdev --getsize64 "$blk" | tr -d '\r')
     isize=$(stat -c %s "$img")
     (( isize <= psize )) || die "image ($isize) larger than $part ($psize)"
@@ -92,7 +100,8 @@ logs)
 backup)
     out=${1:?out}; part=${2:-$PART_DEFAULT}
     wait_rom
-    adb exec-out "dd if=/dev/block/by-name/$part bs=1M 2>/dev/null" > "$out"
+    blk=$(blk_of "$part")
+    adb exec-out "dd if=$blk bs=1M 2>/dev/null" > "$out"
     log "$part → $out ($(sha256sum "$out" | cut -c1-16)…)"
     ;;
 *) sed -n '2,10p' "$0"; exit 1 ;;

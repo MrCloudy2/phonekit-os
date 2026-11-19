@@ -16,6 +16,12 @@ host software that blindly opens `/dev/ttyACM0` lands there harmlessly. On the d
 daemon for an unrelated USB device that polls `/dev/ttyACM0` at ~100 Hz. With the control
 channel on ACM0 it injected `55 aa …` frames and stole reply bytes, which caused the first freeze and failed transfers.
 
+**Several phones at once:** with more than one PhoneKit phone on USB, `ppctl.py` refuses to guess (a self-update meant
+for one phone must never reach another). Pick one by its USB serial: `PPCTL_SERIAL=<serial> scripts/ppctl.py …`,
+`scripts/pptest.py --serial <serial>` (also sets `ANDROID_SERIAL` for the adb checks), `scripts/battery-capacity.py
+--serial <serial>`. `ls /dev/serial/by-id/` shows the serials. Commands that hang up the tty on purpose (`usb mode`,
+`usb reconnect`, `reboot`, `mode phonebox|modem`) count a closed port after sending as success.
+
 ## Wire format
 Both sides use raw mode, 8-bit clean.
 
@@ -43,7 +49,7 @@ Both sides use raw mode, 8-bit clean.
 | Command | Does |
 |---|---|
 | `ping` | `.ok pong <uptime ms>` |
-| `info` | version, uptime, paneld start time, fb geometry, inputs, battery sysfs values |
+| `info` | version, uptime, paneld start time, fb geometry, inputs, `keys` (the hardware keys this phone has: power, volup, voldown, xcover, bixby, top), battery sysfs values |
 | `ls [dir]` | `type mode size name [-> target]` per entry |
 | `get <path>` | file contents (reads to EOF, so `/proc` and `/sys` work; max 64 MiB) |
 | `put <path> <len> [mode]` | upload a file |
@@ -60,11 +66,12 @@ Both sides use raw mode, 8-bit clean.
 | `fbdump` | raw visible frame (`ppctl screenshot out.png` wraps it) |
 | `fstats [reset]` | frames presented, pixels, last damage rect, blanked |
 | `clock on\|off`, `blank on\|off` | 1 Hz status clock; raw display powerdown |
-| `power [wake\|off\|tick\|set <key> <value>]` | power manager status/control (see docs/verification/M4.md) |
-| `usb [mode A\|B \| reconnect [ms]]` | USB mode (persisted, re-enumerates) / simulated replug |
+| `power [wake\|off\|tick\|set <key> <value>]` | power manager status/control (see docs/verification/M4.md); `backlight` is paneld's 0..306 scale, `backlight_raw`/`backlight_max` the panel's own |
+| `usb [mode A\|B \| reconnect [ms]]` | USB mode (persisted, re-enumerates) / simulated replug; status includes `hid yes\|no` (does the kernel offer the HID function) |
 | `store [set <key> <value>]` | persistent settings (dump/set) |
 | `keys [press <action> \| inject <code> <ms>]` | key bindings; run an action; press a virtual hardware key |
 | `page [n]` | built-in page (0 test, 1 status) |
+| `phonebox mute 1\|0` | test mode, runtime only: ignore the phonebox agent's page switches and wake/sleep requests (`pptest.py` sets it so the agent can keep serving other phones) |
 | `touch hold x y ms` | stationary press (e.g. corner long-press) |
 
 Any traffic on the channel counts as activity for the idle timeout.

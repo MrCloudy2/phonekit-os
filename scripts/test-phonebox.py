@@ -39,9 +39,12 @@ def stats():
 def main():
     if "mode B" not in pp("usb"):
         pp("usb", "mode", "B"); time.sleep(4); pp("--wait", 30, "wait", timeout=45)
+    pp("mode", "phonebox"); time.sleep(2); pp("--wait", 30, "wait", timeout=45)  # earlier suites may leave another page
     print("== adb")
     devs = subprocess.run(["adb", "devices", "-l"], capture_output=True, text=True).stdout
-    check("host adb lists PhoneKit as a device", "model:PhoneKit" in devs, devs.strip().splitlines()[-1] if devs.strip() else "")
+    line = next((l for l in devs.splitlines() if "model:PhoneKit" in l), devs.strip().splitlines()[-1] if devs.strip() else "")
+    # the report goes into git: leave out the phone's serial number (first column)
+    check("host adb lists PhoneKit as a device", "model:PhoneKit" in devs, " ".join(line.split()[1:]))
     prop = subprocess.run(["adb", "shell", "getprop", "ro.phonekit"], capture_output=True, text=True).stdout.strip()
     check("adb shell works (getprop ro.phonekit = 1)", prop == "1", repr(prop))
     print("== agent")

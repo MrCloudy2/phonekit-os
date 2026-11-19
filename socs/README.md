@@ -14,4 +14,5 @@ Link each device that uses it from `quirks.md`, and set `identity.soc_dir` in th
 
 | SoC | Devices | Notes |
 |---|---|---|
+| [exynos8895](exynos8895/quirks.md) | [samsung-dreamlte](../devices/samsung-dreamlte/device.yaml) (in progress) | Samsung header v0 + DT boot image, DECON fbdev, DWC3, SSP sensor hub |
 | [exynos9611](exynos9611/quirks.md) | [samsung-xcoverpro](../devices/samsung-xcoverpro/device.yaml) | Samsung DECON fbdev, DWC3, CHUB sensor hub |

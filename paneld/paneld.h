@@ -150,6 +150,22 @@ void keys_event(int code, int value);
 int keys_tick(void); /* ms until the next key deadline (power-hold reboot) */
 void key_action(const char *act);
 int keys_dump(char *buf, size_t len);
+/* Hardware keys: input.c reports each real key device's EV_KEY bitmap; keys_present() lists the known key
+   names the phone actually has ("power volup voldown bixby"), for `ppctl info` and the test suites. */
+void keys_note_device(const unsigned long *keybits);
+int keys_present(char *buf, size_t len);
+
+/* Extra side keys: XCover Pro's programmable key, Galaxy S8's Bixby key. Both default to mode_next / menu. */
+#define KEY_XCOVER 0xfc
+#define KEY_BIXBY 0x2bf
+/* On-screen names of the mode key and the page key (device.mk MODE_KEY_LABEL / PAGE_KEY_LABEL). An empty page
+   label means the phone has no page key: hold Vol Up/Down instead. */
+#ifndef PP_MODE_KEY_LABEL
+#define PP_MODE_KEY_LABEL "XCOVER"
+#endif
+#ifndef PP_PAGE_KEY_LABEL
+#define PP_PAGE_KEY_LABEL "TOP"
+#endif
 
 /* ui.c — built-in pages until the widget engine (M8) */
 enum { UI_PAGE_TEST, UI_PAGE_STATUS, UI_PAGE_PANEL, UI_PAGE_MODEM, UI_PAGES };
@@ -284,8 +300,15 @@ int pb_page_step(int d);
 int pb_page_set(int n);
 int pb_stats(char *b, size_t len);
 int pb_hits(char *b, size_t len);              /* mode B self-heal (once a second) */
+/* Test mode (runtime only, `ppctl phonebox mute 1|0`): ignore the phonebox agent's page switches and wake/sleep
+   requests, so the hardware suites can drive the phone while the agent keeps serving other phones. */
+extern int pb_agent_muted;
 const char *gadget_net_if(void);      /* the USB network interface (mode B) */
 const char *gadget_state(void);      /* UDC state, "configured" when a host is attached */
+int gadget_has_hid(void);            /* 1 when the kernel offers the HID function (MOUSE/KEYBOARD/SCREEN touch) */
+/* Counts USB (re)binds on Samsung composite kernels (always 0 elsewhere). A rebind can replace the /dev/hidgN nodes (devtmpfs deletes and recreates them when
+   Samsung's composite layer rebinds the functions), so HID writers reopen their node when this changes. */
+unsigned gadget_bind_gen(void);
 int gadget_reconnect(int off_ms);    /* soft disconnect/connect */
 int gadget_hid_report(uint8_t *buf, const int *ids, const int *xs, const int *ys, const int *down, int n);
 

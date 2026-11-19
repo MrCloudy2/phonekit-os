@@ -1,10 +1,10 @@
 // Hardware keys -> configurable actions (short press / long press per key).
 //
 // Bindings live in the settings store: key.<name>.short / key.<name>.long = <action>.
-// Names: power, volup, voldown, xcover (0xfc), top (KEY_MACRO17), or key<code>.
+// Names: power, volup, voldown, xcover (0xfc), bixby (0x2bf), top (KEY_MACRO17), or key<code>.
 // Actions: none, screen_toggle, screen_off, page_next, page_prev, mode_next, mode_prev, menu,
 //          mode_toggle, mode_a, mode_b, bright_up, bright_down, status_page.
-// While the mode menu is open: vol/top move, xcover/power select.
+// While the mode menu is open: vol/top move, xcover/bixby/power select.
 // Fixed safety behaviour: holding power for 3 s always reboots. While the screen is
 // off, the first press of any key only wakes it.
 #include "paneld.h"
@@ -13,7 +13,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#define KEY_XCOVER 0xfc
 #define LONG_MS 800
 #define MAX_KEYS_TRACKED 8
 
@@ -22,10 +21,26 @@ static const struct { int code; const char *name; const char *dshort, *dlong; } 
     {KEY_VOLUMEUP, "volup", "bright_up", "page_prev"},
     {KEY_VOLUMEDOWN, "voldown", "bright_down", "page_next"},
     {KEY_XCOVER, "xcover", "mode_next", "menu"},
+    {KEY_BIXBY, "bixby", "mode_next", "menu"},
     {KEY_MACRO17, "top", "page_next", "page_prev"},
 };
 
 static struct { int code; long down_ms; int woke; } held[MAX_KEYS_TRACKED];
+static unsigned present_mask; /* bit i = known[i] exists on a real input device */
+
+void keys_note_device(const unsigned long *keybits) {
+    const unsigned bl = 8 * sizeof(long);
+    for (unsigned i = 0; i < sizeof known / sizeof *known; i++)
+        if (keybits[known[i].code / bl] >> (known[i].code % bl) & 1) present_mask |= 1u << i;
+}
+
+int keys_present(char *buf, size_t len) {
+    int n = 0;
+    buf[0] = 0;
+    for (unsigned i = 0; i < sizeof known / sizeof *known && n < (int)len; i++)
+        if (present_mask >> i & 1) n += snprintf(buf + n, len - n, "%s%s", n ? " " : "", known[i].name);
+    return n;
+}
 
 static const char *key_name(int code, char *buf, size_t len) {
     for (unsigned i = 0; i < sizeof known / sizeof *known; i++)

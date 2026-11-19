@@ -20,10 +20,17 @@ jobs:
         run: |
           gcc -fsanitize=address,undefined -fno-sanitize-recover=all -g -D_GNU_SOURCE -Ipaneld tests/fuzz_json.c paneld/json.c -o fuzz_json
           ./fuzz_json 300000
-      - name: Build paneld (static aarch64) and run it under qemu
+      - name: Build paneld for every device (its own device.mk settings) and run each under qemu
+        # A port must not break another phone: every device folder's settings (-D defines) have to build and start.
         run: |
-          make out/samsung-xcoverpro/paneld
-          make test
+          for mk in devices/*/device.mk; do
+            dev=$(basename "$(dirname "$mk")")
+            [ "$dev" = _template ] && continue
+            echo "::group::$dev"
+            make device="$dev" out/"$dev"/paneld
+            make device="$dev" test
+            echo "::endgroup::"
+          done
       - name: DECK mode and drawing (ASan + UBSan)
         run: |
           gcc -fsanitize=address,undefined -fno-sanitize-recover=all -g -D_GNU_SOURCE -Ipaneld tests/test_deck.c \

@@ -61,21 +61,27 @@ def main():
         time.sleep(10.5)
         s = power()
         check("idle -> off (blanked)", s["state"] == "off" and "blanked 1" in pp("fstats"), f"state={s['state']}")
-        cpu4 = pp("sh", "cat /sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq").strip()
-        check("CPUs capped while off", cpu4 == "936000", f"big-cluster max = {cpu4}")
+        cpufreq = "/sys/devices/system/cpu/cpufreq/policy4"
+        fmin = pp("sh", f"cat {cpufreq}/cpuinfo_min_freq").strip()
+        fmax = pp("sh", f"cat {cpufreq}/cpuinfo_max_freq").strip()
+        cpu4 = pp("sh", f"cat {cpufreq}/scaling_max_freq").strip()
+        check("CPUs capped while off", cpu4 == fmin, f"big-cluster max = {cpu4} (cpuinfo min {fmin})")
         t0 = time.monotonic(); s = power("wake"); rt = (time.monotonic() - t0) * 1000
         check("host wake < 300 ms (unblank)", s["state"] == "active" and 0 <= int(s["last_wake_ms"]) < 300,
               f"unblank took {s['last_wake_ms']} ms (round trip {rt:.0f} ms)")
         cpu4 = pp("sh", "cat /sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq").strip()
-        check("CPU caps lifted on wake", cpu4 == "2314000", f"big-cluster max = {cpu4}")
+        check("CPU caps lifted on wake", cpu4 == fmax, f"big-cluster max = {cpu4} (cpuinfo max {fmax})")
         setp("dim_after_s", 0); setp("off_after_s", 0)  # stay on for the rest
 
         print("== charge limiter")
         s = power("tick"); cap = int(s["battery_pct"])
         setp("charge_lo", max(cap - 10, 0)); setp("charge_hi", max(cap - 5, 1)); s = power("tick"); time.sleep(4)
         cur = int(power()["battery_current_ua"])
-        check("above window -> charging off, battery idle", s["charging_allowed"] == "0" and abs(cur) < 30000,
-              f"battery {cap} %, window {cap - 10}-{cap - 5}, current {cur} uA")
+        # charging_enabled phones hold the battery idle (USB powers the phone); slate-mode phones (CHARGE_CTL_INVERT,
+        # e.g. Galaxy S8) run from the battery, so it discharges. Either way nothing may flow into the battery.
+        st = pp("sh", "cat /sys/class/power_supply/battery/status").strip()
+        check("above window -> charging off", s["charging_allowed"] == "0" and cur < 30000 and st != "Charging",
+              f"battery {cap} %, window {cap - 10}-{cap - 5}, current {cur} uA, status {st}")
         setp("charge_lo", cap + 5); setp("charge_hi", cap + 10); s = power("tick"); time.sleep(4)
         cur = int(power()["battery_current_ua"])
         check("below window -> charging on", s["charging_allowed"] == "1" and cur > 50000, f"current {cur} uA")
@@ -91,6 +97,9 @@ def main():
               f"state={s['state']} charging_allowed={s['charging_allowed']}")
 
         print("== power per state (fuel gauge, slate mode)")
+        # power-measure.sh uses slate mode; keep the limiter at "charging off" so its 30 s re-assert agrees with it
+        # (on slate-mode phones the limiter's own switch IS batt_slate_mode)
+        cap = int(power("tick")["battery_pct"]); setp("charge_lo", max(cap - 10, 0)); setp("charge_hi", max(cap - 5, 1)); power("tick")
         setp("bright", 128); mw_on = measure("active, backlight 128")
         setp("bright", 12); mw_dim = measure("dim, backlight 12")
         setp("bright", 128); power("off"); mw_off = measure("off (blanked, CPUs capped)")

@@ -79,6 +79,8 @@ quirks:
   - "kernel waits for async probes before /init (async_synchronize_full): PROBE_PREFER_ASYNCHRONOUS gains nothing"
   - "RNDIS never transmits after the first bind of a fresh function at boot: paneld re-links it when RX grows but TX stays 0"
   - "NCM enumerates but never transmits on this kernel: use RNDIS"
+  - "closing /dev/hidgN and reopening it right after a USB rebind locked up the whole kernel (no panic, no paneld watchdog; only a Vol Down + Power reset recovered it) during the MOUSE tests: keep HID fds open across rebinds (2026-11-19)"
+  - "rare: after a soft replug (soft_connect disconnect/connect, test-usb's 50x loop) the DWC3 stayed in state 'default' and never configured again; the host got 'device not accepting address, error -71' even after a physical replug. Only a reboot recovered it (2026-11-19, once in ~150 replugs)"
   - "Wi-Fi firmware lives on vendor inside super (dynamic partitions): copied from the ROM into prebuilt/firmware, MAC from efs/wifi/.mac.info"
 
 usb:

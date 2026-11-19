@@ -309,7 +309,7 @@ int inject_key_open(void) {
         uk_fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
         if (uk_fd < 0) return -1;
         ioctl(uk_fd, UI_SET_EVBIT, EV_KEY);
-        int codes[] = {KEY_POWER, KEY_VOLUMEUP, KEY_VOLUMEDOWN, 0xfc, KEY_MACRO17};
+        int codes[] = {KEY_POWER, KEY_VOLUMEUP, KEY_VOLUMEDOWN, KEY_XCOVER, KEY_BIXBY, KEY_MACRO17};
         for (unsigned i = 0; i < sizeof codes / sizeof *codes; i++) ioctl(uk_fd, UI_SET_KEYBIT, codes[i]);
         struct uinput_user_dev u = {0};
         snprintf(u.name, sizeof u.name, "phonepanel-inject-keys");

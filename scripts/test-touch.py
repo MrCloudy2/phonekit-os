@@ -15,7 +15,7 @@ import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PPCTL = [sys.executable, os.path.join(HERE, "ppctl.py")]
-W, H = 1080, 2340
+W, H = 1080, 2340  # replaced by the phone's size in main()
 failures = []
 
 
@@ -24,6 +24,15 @@ def pp(*args, timeout=60):
     if r.returncode:
         raise RuntimeError(f"ppctl {' '.join(map(str, args))}: {r.stderr.strip()}")
     return r.stdout
+
+
+def fb_size():
+    """The phone's panel size from `ppctl info` ("fb 1440x2960 ..."), so the checks fit every device."""
+    for line in pp("info").splitlines():
+        if line.startswith("fb "):
+            w, h = line.split()[1].split("x")
+            return int(w), int(h)
+    raise RuntimeError("ppctl info has no fb line")
 
 
 def stats():
@@ -68,8 +77,10 @@ def pixel(img, x, y):
 
 
 def main():
+    global W, H
     outdir = sys.argv[sys.argv.index("--png") + 1] if "--png" in sys.argv else "build"
     pp("idle", 0)
+    W, H = fb_size()
     if "mode B" not in pp("usb"):  # PANEL mode: paneld owns the screen (in SCREEN the PC does)
         pp("usb", "mode", "B"); time.sleep(2); pp("--wait", 30, "wait", timeout=45)
     pp("page", 0)
@@ -97,7 +108,8 @@ def main():
 
     print("== stroke pixels + latency")
     pp("pattern"); pp("tstats", "reset")
-    pp("touch", "swipe", 100, 1800, 980, 2200, 60); time.sleep(1.5)
+    # positions as fractions of the panel (laid out on 1080x2340: swipe 100,1800 -> 980,2200), so any size works
+    pp("touch", "swipe", W * 100 // 1080, H * 1800 // 2340, W * 980 // 1080, H * 2200 // 2340, 60); time.sleep(1.5)
     s = stats()
     lat = dict(zip(s["latency_us"][0::2], map(int, s["latency_us"][1::2])))
     # event timestamp -> pan done (includes the vsync wait); 2 frames at 60 Hz = 33.4 ms
@@ -105,8 +117,8 @@ def main():
     png = os.path.join(outdir, "test-touch.png")
     pp("screenshot", png, timeout=180)
     img = read_png_rgb(png)
-    mid = pixel(img, 540, 2000)  # midpoint of the swipe
-    off = pixel(img, 900, 1680)  # dark area: below the clock, above the stroke
+    mid = pixel(img, W // 2, H * 2000 // 2340)  # midpoint of the swipe
+    off = pixel(img, W * 900 // 1080, H * 1680 // 2340)  # dark area: below the grey ramp, above the stroke
     check("stroke drawn at the touched pixels", mid[2] > 200 and mid[1] > 180 and mid[0] < 120, f"rgb{mid}")
     check("untouched area unchanged", max(off) < 60, f"rgb{off}")
     print(f"  screenshot: {png}")

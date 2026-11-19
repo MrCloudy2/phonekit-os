@@ -265,6 +265,14 @@ menu). PANEL = phonebox-style dashboard on USB B; the others share USB A without
 - [ ] Menu reachable with side buttons only (no touch needed to switch out of keyboard mode).
 
 #### M6e · Rotation and on-device Settings ✅
+*2026-11-19 (Galaxy S8 / Exynos 8895): manual rotation works in all 4 orientations; **autorotate is blocked** on this
+board. Its sensor hub runs on the Broadcom BCM4775 GPS chip, and Android's closed `lhd` daemon
+(`/vendor/bin/hw/lhd`) patches the chip firmware through `/dev/bbd_patch` and bridges every sensor packet between
+the chip and `/dev/bbd_sensor`. Without it: `[SSPBBD]: ssp_down == true`. Open research, for later:
+(a) run Android's own `lhd` from the ROM's system partition (needs bionic + APEX libraries, maybe Binder and
+properties; would tie PhoneKit to an installed ROM); (b) reimplement what `lhd` does (patch upload + the BBD
+packet bridge) natively in paneld, which the maintainer considers the only reliable option. Details:
+`socs/exynos8895/quirks.md`.*
 *2026-11-17: autorotate default on; SCREEN (GUD) landscape is done by the host rotating its output (KDE: `kscreen-doctor output.USB-1.rotation.left`, verified by the user in M6b); a native GUD rotation stays an option.*
 *2026-11-15: manual rotation for all paneld screens (logical vs panel coordinates in the fb layer), Settings
 screen (rotation, brightness, dim/off, charge window, USB network), all persisted; landscape keyboard verified
