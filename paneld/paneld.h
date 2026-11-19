@@ -256,6 +256,8 @@ void wifi_tick(void);
 void ssh_tick(void);
 void bt_tick(void);                    /* bt.c: SCSC raw HCI <-> vhci bridge when enabled (M10c) */
 int bt_ctl(char **argv, int argc, char *out, size_t len);
+int bt_bcm_open(void);      /* bt_bcm.c: power + patch a Broadcom UART controller; the tty fd at its fast rate, or -1 */
+void bt_bcm_close(int fd);
 /* bthid.c — the phone as a Bluetooth keyboard + mouse */
 void bthid_set(int on);
 void bthid_pair(void);

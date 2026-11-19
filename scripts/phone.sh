@@ -61,15 +61,17 @@ flash)
     (( isize <= psize )) || die "image ($isize) larger than $part ($psize)"
     log "writing $(basename "$img") → $part"
     adb push -q "$img" /data/local/tmp/pp.img
-    if (( isize == psize && psize % 65536 == 0 )); then
-        # Full-partition image (AVB-padded): skip paneld's settings store at
+    # 64 KiB blocks where they divide the partition, else 4 KiB (Galaxy S9+ RECOVERY: 68149248 B = 1039.875 x 64 KiB)
+    bs=65536; (( psize % bs )) && bs=4096
+    if (( isize == psize && psize % bs == 0 )); then
+        # Full-partition image (padded to the partition): skip paneld's settings store at
         # [end-2MiB, end-1MiB) so a deploy keeps the phone's settings.
-        nblk=$(( psize / 65536 )); s0=$(( nblk - 32 )); s1=$(( nblk - 16 ))
-        adb shell "dd if=/data/local/tmp/pp.img of=$blk bs=65536 count=$s0 conv=fsync 2>/dev/null &&
-                   dd if=/data/local/tmp/pp.img of=$blk bs=65536 skip=$s1 seek=$s1 conv=fsync 2>/dev/null &&
+        nblk=$(( psize / bs )); s0=$(( nblk - 2097152 / bs )); s1=$(( nblk - 1048576 / bs ))
+        adb shell "dd if=/data/local/tmp/pp.img of=$blk bs=$bs count=$s0 conv=fsync 2>/dev/null &&
+                   dd if=/data/local/tmp/pp.img of=$blk bs=$bs skip=$s1 seek=$s1 conv=fsync 2>/dev/null &&
                    rm /data/local/tmp/pp.img && sync"
-        want=$( { head -c $(( s0 * 65536 )) "$img"; tail -c $(( (nblk - s1) * 65536 )) "$img"; } | sha256sum | cut -d' ' -f1)
-        got=$(adb exec-out "dd if=$blk bs=65536 count=$s0 2>/dev/null; dd if=$blk bs=65536 skip=$s1 2>/dev/null" | sha256sum | cut -d' ' -f1)
+        want=$( { head -c $(( s0 * bs )) "$img"; tail -c $(( (nblk - s1) * bs )) "$img"; } | sha256sum | cut -d' ' -f1)
+        got=$(adb exec-out "dd if=$blk bs=$bs count=$s0 2>/dev/null; dd if=$blk bs=$bs skip=$s1 2>/dev/null" | sha256sum | cut -d' ' -f1)
         what="(settings store preserved)"
     else
         adb shell "dd if=/data/local/tmp/pp.img of=$blk bs=1M conv=fsync 2>/dev/null && rm /data/local/tmp/pp.img && sync"

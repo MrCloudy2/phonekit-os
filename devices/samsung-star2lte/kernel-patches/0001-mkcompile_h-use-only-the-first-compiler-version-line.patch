@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: phonepanel <phonepanel@localhost>
+Date: Thu, 19 Nov 2026 12:50:07 +0100
+Subject: [PATCH] mkcompile_h: use only the first compiler version line
+
+Some host clang builds print more than one line matching " version " (e.g. "Found CUDA installation:
+/opt/cuda, version"), which ended up inside the kernel version string. Keep the first line, as the
+Galaxy S8 and XCover Pro trees do (devices/samsung-dreamlte/kernel-patches/0003).
+---
+ scripts/mkcompile_h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/scripts/mkcompile_h b/scripts/mkcompile_h
+index cb73747002e..fd495c33ea3 100755
+--- a/scripts/mkcompile_h
++++ b/scripts/mkcompile_h
+@@ -76,7 +76,7 @@ UTS_TRUNCATE="cut -b -$UTS_LEN"
+   echo \#define LINUX_COMPILE_BY \"`echo $LINUX_COMPILE_BY | $UTS_TRUNCATE`\"
+   echo \#define LINUX_COMPILE_HOST \"`echo $LINUX_COMPILE_HOST | $UTS_TRUNCATE`\"
+ 
+-  echo \#define LINUX_COMPILER \"`$CC -v 2>&1 | grep ' version '`\"
++  echo \#define LINUX_COMPILER \"`$CC -v 2>&1 | grep ' version ' | head -n 1`\"
+ ) > .tmpcompile
+ 
+ # Only replace the real compile.h if the new one is different,

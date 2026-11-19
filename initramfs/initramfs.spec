@@ -14,9 +14,11 @@ dir   /bin                 0755 0 0
 # PID 1: paneld (built by `make`)
 file  /init                ${PANELD_BIN} 0755 0 0
 file  /etc/phonepanel-version ${VERSION_FILE} 0644 0 0
+# DNS for programs on the phone (ping, wget, ssh): udhcpc's hook writes the servers to /run/resolv.conf (paneld/wifi.c)
+slink /etc/resolv.conf     /run/resolv.conf 0777 0 0
 
 # Device firmware imported locally (never committed), e.g. Wi-Fi blobs: devices/<dev>/prebuilt/firmware/
-#   wifi/ -> /vendor/etc/wifi (Samsung SCSC), efs/mac.info -> the Wi-Fi MAC the driver reads
+#   wifi/ -> /vendor/etc/wifi (Samsung SCSC), lib/firmware/ -> /lib/firmware, efs/mac.info -> the Wi-Fi MAC the driver reads
 dir   /vendor              0755 0 0
 dir   /vendor/etc          0755 0 0
 dir   /mnt                 0755 0 0
@@ -24,6 +26,11 @@ dir   /mnt/vendor          0755 0 0
 dir   /mnt/vendor/efs      0755 0 0
 dir   /mnt/vendor/efs/wifi 0755 0 0
 ? tree  /vendor/etc/wifi     ${FW_DIR}/wifi 0644 0 0
+# lib/firmware/ -> /lib/firmware, the kernel's request_firmware() path (Galaxy S9+ bcmdhd: DHD_LINUX_STD_FW_API)
+? tree  /lib                 ${FW_DIR}/lib 0644 0 0
+# efs-root/ -> /efs, Android's own EFS paths (Galaxy S9+: wifi/.mac.info for bcmdhd, bluetooth/bt_addr), copied from
+# the phone once while porting. Read-only copies: PhoneKit never touches the real EFS partition
+? tree  /efs                 ${FW_DIR}/efs-root 0644 0 0
 ? file  /mnt/vendor/efs/wifi/.mac.info ${FW_DIR}/efs/mac.info 0644 0 0
 dir   /mnt/vendor/efs/bluetooth 0755 0 0
 ? file  /mnt/vendor/efs/bluetooth/bt_addr ${FW_DIR}/efs/bt_addr 0644 0 0

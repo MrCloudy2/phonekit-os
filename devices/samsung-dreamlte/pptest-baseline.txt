@@ -1,4 +1,4 @@
-# pptest baseline for samsung-dreamlte: what this phone passed at 52f6d3f-dirty, 2026-11-19 (scripts/ppregress.py --update)
+# pptest baseline for samsung-dreamlte: what this phone passed at 3e7acd9-dirty, 2026-11-19 (scripts/ppregress.py --update)
 # suite	status	count	check
 display	PASS	1	CPUs mostly in deepest idle (cluster sleep)
 display	PASS	1	about 1 frame per second

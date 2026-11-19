@@ -20,6 +20,11 @@ enum hw_usb {
     HW_USB_SAMSUNG_COMPOSITE, /* Samsung android0 layer: functions + enable (Galaxy S8 / Exynos 8895) */
 };
 
+enum hw_bt {
+    HW_BT_SCSC,     /* Samsung SCSC: the chip's raw H4 device /dev/scsc_h4_0 (XCover Pro / Exynos 9611) */
+    HW_BT_BCM_UART, /* Broadcom on a UART: rfkill power, .hcd patchram, baud switch (Galaxy S9+ / Exynos 9810) */
+};
+
 struct hw_key {
     int code;          /* Linux key code, 0 = the phone has no such key */
     const char *label; /* on-screen name ("XCOVER") */
@@ -34,13 +39,20 @@ struct phone_hw {
     struct hw_key page_key;     /* next page / hold: previous page. Moves in the menu. code 0: hold Vol Up/Down */
     enum hw_usb usb;
     const char *sensor_hub_on;  /* sysfs attribute that powers the sensor co-processor, "" = the kernel does it */
+    const char *usb_config_name; /* configs/c.1 configuration string. Exynos 9810 composite kernels treat any name
+                                    but "Conf 1" as a GSI/VTS image and clear the functions on every relink */
+    enum hw_bt bt;              /* how paneld reaches the Bluetooth controller */
+    const char *bt_uart;        /* HW_BT_BCM_UART: the tty, e.g. "ttySAC1" (/sys/class/tty/<name>) */
+    const char *bt_rfkill;      /* HW_BT_BCM_UART: rfkill name that powers the chip */
+    const char *bt_fw;          /* HW_BT_BCM_UART: the .hcd patchram file */
 };
 
 /* The behaviour every phone had before each field existed. Never change a value here: add a field instead. */
 #define HW_DEFAULTS                                                                                                   \
     .name = "?", .fb_swap_rb = 0, .charge_ctl = "charging_enabled", .charge_ctl_invert = 0,                          \
     .mode_key = {0xfc, "XCOVER"}, .page_key = {KEY_MACRO17, "TOP"}, .usb = HW_USB_CONFIGFS,               \
-    .sensor_hub_on = "/sys/devices/platform/11980000.contexthub/poweron"
+    .sensor_hub_on = "/sys/devices/platform/11980000.contexthub/poweron", .usb_config_name = "phonepanel", \
+    .bt = HW_BT_SCSC, .bt_uart = "", .bt_rfkill = "", .bt_fw = ""
 
 extern const struct phone_hw phone;
 

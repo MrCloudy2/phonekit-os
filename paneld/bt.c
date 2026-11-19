@@ -53,17 +53,28 @@ static long h4_len(const unsigned char *b, size_t n) {
 
 static void set_address(void);
 
+/* The controller's H4 byte stream: Samsung SCSC's device node, or a Broadcom UART after its bring-up (bt_bcm.c). */
+static int bcm(void) { return phone.bt == HW_BT_BCM_UART; }
+static int chip_present(void) {
+    char p[96];
+    if (!bcm()) return access(H4, F_OK) == 0;
+    snprintf(p, sizeof p, "/sys/class/tty/%s", phone.bt_uart);
+    return access(p, F_OK) == 0;
+}
+static void chip_close(int fd) { if (bcm()) bt_bcm_close(fd); else close(fd); }
+
 static void *bridge(void *v) {
     (void)v;
-    set_address();
-    int h4 = open(H4, O_RDWR | O_CLOEXEC);
-    if (h4 < 0) { logmsg("bt: %s: %s", H4, strerror(errno)); running = 0; return NULL; }
+    if (!bcm()) set_address();
+    int h4 = bcm() ? bt_bcm_open() : open(H4, O_RDWR | O_CLOEXEC);
+    if (h4 < 0) { if (!bcm()) logmsg("bt: %s: %s", H4, strerror(errno)); running = 0; return NULL; }
+    ensure_node("misc", "vhci", VHCI);
     int vh = open(VHCI, O_RDWR | O_CLOEXEC);
-    if (vh < 0) { logmsg("bt: %s: %s", VHCI, strerror(errno)); close(h4); running = 0; return NULL; }
+    if (vh < 0) { logmsg("bt: %s: %s", VHCI, strerror(errno)); chip_close(h4); running = 0; return NULL; }
     /* create hci0 now (HCI_VENDOR_PKT 0xff, device type 0x00 = primary) instead of waiting for vhci's 1 s timeout */
     unsigned char create[2] = {0xff, 0x00};
     (void)!write(vh, create, 2);
-    logmsg("bt: bridging %s <-> %s", H4, VHCI);
+    logmsg("bt: bridging %s <-> %s", bcm() ? phone.bt_uart : H4, VHCI);
     static unsigned char in[4096 + 8];
     size_t have = 0;
     unsigned char buf[4096];
@@ -96,7 +107,7 @@ static void *bridge(void *v) {
         if ((p[0].revents | p[1].revents) & (POLLERR | POLLHUP)) break;
     }
     close(vh); /* hci0 goes away */
-    close(h4); /* the chip's Bluetooth service stops */
+    chip_close(h4); /* the chip's Bluetooth service stops (Broadcom: rfkill off) */
     logmsg("bt: bridge stopped");
     running = 0;
     return NULL;
@@ -135,7 +146,7 @@ void bt_tick(void) {
     static int last = -1;
     int w = bt_wanted() && now_ms() >= restart_until;
     if (w != last) { if (last >= 0) logmsg("bt: %s", w ? "on" : "off (not needed now)"); last = w; }
-    want = w && access(H4, F_OK) == 0;
+    want = w && chip_present();
     bthid_set(want);
     if (want && !running) {
         running = 1;
