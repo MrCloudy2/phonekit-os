@@ -34,7 +34,7 @@ other phones' `paneld-config.txt` and `footprint.txt` are unchanged.
 ## Results (2026-11-19, source kernel `4.14.356-openela-rc1-ga412cfaf86b9`)
 | Area | Result |
 |---|---|
-| pptest | **91 pass, 1 fail, 1 skip**: display 5/5, touch 10/10, power 11/12, keys 8/8 (+1 skip: no top key), usb 11/11, input-modes 16/16, panel 21/21, phonebox 9/9. Two full runs, same result |
+| pptest | **91 pass, 1 fail, 1 skip**: display 5/5, touch 10/10, power 11/12, keys 8/8 (+1 skip: no top key), usb 11/11, input-modes 16/16, panel 21/21, phonebox 9/9. Three full runs, same result (the last at `3bd2414`: off 144 mW vs 709 active) |
 | Power | 712 mW active (test pattern, brightness 128), ~405 mW dim, 143-156 mW off (panel blanked, all three CPU clusters capped). "off < 1/5 of active" fails by 1-14 mW: the 5.8" panel draws less when active than the S9+'s, while the off floor is the same (S9+ 125-150 mW). A real measurement, not loosened for one phone (the S8 fails the same check at 245 mW) |
 | Charge limiter | `charging_enabled`; above the window the phone runs from the battery (~8 mA), below it charges (~160 mA) |
 | Boot | kernel -> paneld ready 1.9 s (prebuilt and source kernel alike) |
