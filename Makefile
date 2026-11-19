@@ -23,25 +23,26 @@ BUSYBOX ?= $(wildcard $(CURDIR)/out/busybox/busybox)
 
 IMG := $(OUT)/phonepanel.img
 
-.PHONY: all import flash deploy update logs test clean FORCE
+.PHONY: all import flash deploy update logs test check-all config-check clean FORCE
 all: $(IMG)
 
 import:
 	scripts/import-prebuilt.sh $(device) $(or $(IMG_SRC),$(PREBUILT_FROM))
 
-PANELD_SRC := $(wildcard paneld/*.c)
+# paneld = the shared code + this phone's hardware table (devices/<dev>/hw.c, fields in paneld/hw.h)
+ifeq ($(wildcard $(DEVDIR)/hw.c),)
+$(error $(DEVDIR)/hw.c is missing: copy devices/_template/hw.c and fill it in)
+endif
+PANELD_SRC := $(wildcard paneld/*.c) $(DEVDIR)/hw.c
 FONTS := $(wildcard assets/fonts/*.ttf)
 $(OUT)/fonts.c: $(FONTS) scripts/embed-fonts.py | $(OUT)
 	python3 scripts/embed-fonts.py assets/fonts $@
 BEARSSL := out/bearssl/libbearssl.a
 $(BEARSSL):
 	scripts/build-bearssl.sh
-$(OUT)/paneld: $(PANELD_SRC) $(OUT)/fonts.c paneld/paneld.h $(BEARSSL) FORCE | $(OUT)
-	$(CROSS_CC) $(CFLAGS) -Iout/bearssl/inc -D_GNU_SOURCE -static -s -DPP_VERSION='"$(VERSION)"' \
-	    -DPP_STORE_PART='"$(TARGET_PARTITION_NAME)"' -DPP_FB_SWAP_RB=$(or $(FB_SWAP_RB),0) \
-	    -DPP_CHARGE_CTL='"$(or $(CHARGE_CTL),charging_enabled)"' -DPP_CHARGE_CTL_INVERT=$(or $(CHARGE_CTL_INVERT),0) \
-	    -DPP_MODE_KEY_LABEL='"$(or $(MODE_KEY_LABEL),XCOVER)"' -DPP_PAGE_KEY_LABEL='"$(if $(filter undefined,$(origin PAGE_KEY_LABEL)),TOP,$(PAGE_KEY_LABEL))"' \
-	    -DPP_AUTOREBOOT_SECS=$(PP_AUTOREBOOT_SECS) -o $@.tmp $(PANELD_SRC) $(OUT)/fonts.c $(BEARSSL) -lm
+$(OUT)/paneld: $(PANELD_SRC) $(OUT)/fonts.c paneld/paneld.h paneld/hw.h $(BEARSSL) FORCE | $(OUT)
+	$(CROSS_CC) $(CFLAGS) -Wno-override-init -Ipaneld -Iout/bearssl/inc -D_GNU_SOURCE -static -s -DPP_VERSION='"$(VERSION)"' \
+	    -DPP_STORE_PART='"$(TARGET_PARTITION_NAME)"' -DPP_AUTOREBOOT_SECS=$(PP_AUTOREBOOT_SECS) -o $@.tmp $(PANELD_SRC) $(OUT)/fonts.c $(BEARSSL) -lm
 	@cmp -s $@.tmp $@ && rm $@.tmp || mv $@.tmp $@
 
 $(OUT)/version: FORCE | $(OUT)
@@ -88,8 +89,21 @@ deploy: $(IMG)
 logs:
 	scripts/phone.sh logs
 
+# The hardware gate: pptest on every connected phone against its own baseline (no device= needed)
+check-all:
+	scripts/check-all.py
+
 test: $(OUT)/paneld
 	qemu-aarch64-static $(OUT)/paneld & pid=$$!; sleep 2; kill $$pid 2>/dev/null; wait $$pid 2>/dev/null; true
+
+# What paneld does on this phone must match devices/<dev>/paneld-config.txt (CI runs this for every phone).
+# After an intended change: make device=<dev> config-update, and commit the diff.
+config-check: $(OUT)/paneld
+	PANELD_PRINT_CONFIG=1 qemu-aarch64-static $(OUT)/paneld | diff -u $(DEVDIR)/paneld-config.txt - \
+	    || { echo "paneld behaviour changed on $(device): check the diff, then make device=$(device) config-update"; exit 1; }
+
+config-update: $(OUT)/paneld
+	PANELD_PRINT_CONFIG=1 qemu-aarch64-static $(OUT)/paneld > $(DEVDIR)/paneld-config.txt
 
 $(OUT):
 	mkdir -p $@

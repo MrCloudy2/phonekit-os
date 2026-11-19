@@ -136,6 +136,7 @@ static void cmd_info(struct app *a) {
     char buf[4096], v[128];
     int n = 0;
     n += snprintf(buf + n, sizeof buf - n, "version %s\n", PP_VERSION);
+    n += snprintf(buf + n, sizeof buf - n, "device %s\n", phone.name); /* devices/<name>, from hw.c */
     n += snprintf(buf + n, sizeof buf - n, "uptime_ms %ld\n", now_ms());
     n += snprintf(buf + n, sizeof buf - n, "paneld_start_ms %ld\n", a->boot_ms);
     n += snprintf(buf + n, sizeof buf - n, "idle_reboot_s %d\n", a->idle_reboot_s);

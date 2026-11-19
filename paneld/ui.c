@@ -38,9 +38,10 @@ static void draw_status_page(void) {
     long up = now_ms() / 1000;
     snprintf(l, sizeof l, "UP %ldD %02ld:%02ld:%02ld ", up / 86400, up / 3600 % 24, up / 60 % 60, up % 60);
     fb_text(fb, 60, y, 6, l, fg, bg); y += 160;
-    fb_text(fb, 60, y, 4, PP_MODE_KEY_LABEL ": NEXT MODE  HOLD: MENU", dim, bg); y += 50;
-    fb_text(fb, 60, y, 4, PP_PAGE_KEY_LABEL[0] ? PP_PAGE_KEY_LABEL ": PAGES  VOL: BRIGHTNESS" : "VOL: BRIGHTNESS  HOLD VOL: PAGES",
-            dim, bg); y += 50;
+    hw_hint_mode(l, sizeof l);
+    fb_text(fb, 60, y, 4, l, dim, bg); y += 50;
+    hw_hint_page(l, sizeof l);
+    fb_text(fb, 60, y, 4, l, dim, bg); y += 50;
     fb_text(fb, 60, y, 4, "POWER: SCREEN  HOLD 3 S: REBOOT", dim, bg);
 }
 

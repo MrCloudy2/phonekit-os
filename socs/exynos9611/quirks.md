@@ -7,7 +7,7 @@ Unverified until someone ports one; please add yours.
 ## Display: Samsung DECON (fbdev)
 - `/dev/fb0`, ARGB8888 reported, double buffer via pan (virtual height = 2× panel).
 - **Colour order**: `decon_pan_display` hard-codes ABGR8888, so the panel shows the buffer as BGR. Set
-  `FB_SWAP_RB := 1` in `device.mk`. Check by eye with `scripts/ppctl.py colortest`.
+  `.fb_swap_rb = 1` in `devices/<dev>/hw.c`. Check by eye with `scripts/ppctl.py colortest`.
 - **Black after wake**: after `FBIOBLANK` powerdown, the window registers reset, and pan never re-enables it
   (`decon_set_par` is `#if 0`'d inside `decon_pan_display`). paneld forces `FBIOPUT_VSCREENINFO` after unblank
   (`fb_restore_window` in `paneld/fb.c`). Already generic; nothing to configure.

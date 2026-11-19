@@ -20,8 +20,9 @@ jobs:
         run: |
           gcc -fsanitize=address,undefined -fno-sanitize-recover=all -g -D_GNU_SOURCE -Ipaneld tests/fuzz_json.c paneld/json.c -o fuzz_json
           ./fuzz_json 300000
-      - name: Build paneld for every device (its own device.mk settings) and run each under qemu
-        # A port must not break another phone: every device folder's settings (-D defines) have to build and start.
+      - name: Build paneld for every device (its own hw.c and device.mk), run it under qemu, compare its behaviour
+        # A port must not break another phone: every device has to build and start, and what paneld does on it
+        # (PANELD_PRINT_CONFIG: hw.c + shared defaults) must match devices/<dev>/paneld-config.txt.
         run: |
           for mk in devices/*/device.mk; do
             dev=$(basename "$(dirname "$mk")")
@@ -29,6 +30,7 @@ jobs:
             echo "::group::$dev"
             make device="$dev" out/"$dev"/paneld
             make device="$dev" test
+            make device="$dev" config-check
             echo "::endgroup::"
           done
       - name: DECK mode and drawing (ASan + UBSan)

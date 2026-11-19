@@ -25,11 +25,12 @@ details. Read `AGENTS.md` and `docs/recovery.md` before doing anything that touc
 2. **Facts from the phone**: in its working recovery or ROM with root, run `scripts/probe.sh`
    (`adb push scripts/probe.sh /tmp/ && adb shell sh /tmp/probe.sh`). It drafts `device.yaml`.
 3. **Device folder**: `cp -r devices/_template devices/<vendor>-<codename>`; fill `device.mk` (partition name and size,
-   flash command, `FB_SWAP_RB`) and `device.yaml` from the probe. Personal paths go in `local.mk` (gitignored).
+   flash command), `hw.c` (how paneld drives the hardware: colours, charging, keys, USB type, sensor hub; see
+   `paneld/hw.h`) and `device.yaml` from the probe. Personal paths go in `local.mk` (gitignored).
 4. **Import + build**: `make import device=<dev> IMG_SRC=<known-good recovery.img>`, `make device=<dev>`. Compare the
    header with `unpack_bootimg` on both images.
 5. **First boot** (ask first): flash recovery, boot it. Gate: test pattern with a red border and touch drawing.
-   Black screen with backlight → `make logs` from the ROM straight away; wrong colours → `FB_SWAP_RB := 1`;
+   Black screen with backlight → `make logs` from the ROM straight away; wrong colours → `.fb_swap_rb = 1` in `hw.c`;
    ROM replaced recovery → `persist.vendor.recovery_update=false`.
 6. **Control channel**: `scripts/ppctl.py --wait 90 info`. From here, iterate with `make update` (self-update, ~15 s)
    and `make deploy` (from the ROM) — no buttons.
@@ -39,7 +40,12 @@ details. Read `AGENTS.md` and `docs/recovery.md` before doing anything that touc
 8. **Optional**: kernel from source (`KERNEL_SRC`, `KERNEL_FRAGMENTS`, patches as `git format-patch`), trim one thing
    at a time with `initcall_debug`; Wi-Fi firmware into `prebuilt/firmware/` (see `docs/verification/M10.md`).
 9. **Record**: `scripts/devicedb.py check` and `scripts/devicedb.py table`; mark only verified values
-   `verified: true`; help the user open a PR (partial ports welcome) using `.github/PULL_REQUEST_TEMPLATE.md`.
+   `verified: true`. Then:
+   - `make device=<dev> config-update` (commit `paneld-config.txt`);
+   - after a verified pptest run, `scripts/ppregress.py <dev> <report> --update` (the baseline);
+   - `make check-all` with every phone the user has connected. A regression on another phone blocks the PR, and
+     the fix goes through `hw.c` / `paneld/hw.h`, never `#ifdef`.
+   Help the user open a PR (partial ports welcome) using `.github/PULL_REQUEST_TEMPLATE.md`, with `out/check-all.md`.
 
 ## When stuck
 - Logs: `make logs` (previous boot's `last_kmsg`), `/sys/fs/pstore/console-ramoops-0`, `ppctl dmesg`.

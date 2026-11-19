@@ -2,8 +2,8 @@
 //
 // The CHUB firmware is built into the kernel (firmware/sensorhub/*.fw); Android powers the
 // co-processor on by writing its `poweron` sysfs attribute, after which the SSP driver
-// registers IIO devices per sensor. Phones whose SSP hub is a separate MCU (Galaxy S8 / Exynos 8895)
-// have no contexthub device: the kernel brings the hub up and the IIO devices exist from boot. We use:
+// registers IIO devices per sensor (hw.c sensor_hub_on). Phones whose SSP hub is a separate MCU (Galaxy S8 /
+// Exynos 8895, sensor_hub_on "") have no contexthub: the kernel brings the hub up at boot. We use:
 //   - device_orientation (type 27): orientation computed on the co-processor, event on
 //     change only. Preferred: zero main-CPU work.
 //   - accelerometer (type 1, ~6 Hz): fallback; we derive the orientation with hysteresis.
@@ -66,28 +66,12 @@ static int open_stream(const char *dev) {
     return open(dev, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
 }
 
-/* The co-processor's poweron attribute (/sys/devices/platform/<addr>.contexthub/poweron), if this phone has one. */
-static int find_chub(char *out, size_t len) {
-    DIR *d = opendir("/sys/devices/platform");
-    if (!d) return -1;
-    struct dirent *e;
-    int found = -1;
-    while ((e = readdir(d)) && found < 0) {
-        const char *dot = strstr(e->d_name, ".contexthub");
-        if (!dot || dot[11]) continue;
-        snprintf(out, len, "/sys/devices/platform/%.64s/poweron", e->d_name);
-        if (access(out, W_OK) == 0) found = 0;
-    }
-    closedir(d);
-    return found;
-}
-
 /* Powers the co-processor if there is one (once per boot); returns 0 when the sensor devices exist.
    Failures are logged once; the caller may retry quietly. */
 static int hub_up(void) {
     if (powered) return 0;
-    char chub[160];
-    if (find_chub(chub, sizeof chub) == 0 && write_file(chub, "1") < 0) {
+    const char *chub = phone.sensor_hub_on;
+    if (chub[0] && write_file(chub, "1") < 0) {
         if (!hub_failed) logmsg("sensors: %s: %s", chub, strerror(errno));
         hub_failed = 1;
         return -1;

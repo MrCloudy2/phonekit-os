@@ -50,7 +50,7 @@ if ls /sys/class/drm/card*-* >/dev/null 2>&1; then
 fi
 bl=$(ls -d /sys/class/backlight/* 2>/dev/null | head -1)
 p "  backlight: \"${bl:-}\"   # max $(rd "$bl/max_brightness")"
-p "  color_order_verified: false   # check with ppctl colortest; set FB_SWAP_RB if red shows blue"
+p "  color_order_verified: false   # check with ppctl colortest; set fb_swap_rb in hw.c if red shows blue"
 p ""
 
 p "input:"

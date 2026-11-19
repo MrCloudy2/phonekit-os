@@ -77,13 +77,18 @@ def main():
         s = power("tick"); cap = int(s["battery_pct"])
         setp("charge_lo", max(cap - 10, 0)); setp("charge_hi", max(cap - 5, 1)); s = power("tick"); time.sleep(4)
         cur = int(power()["battery_current_ua"])
-        # charging_enabled phones hold the battery idle (USB powers the phone); slate-mode phones (CHARGE_CTL_INVERT,
+        # charging_enabled phones hold the battery idle (USB powers the phone); slate-mode phones (hw.c charge_ctl_invert,
         # e.g. Galaxy S8) run from the battery, so it discharges. Either way nothing may flow into the battery.
         st = pp("sh", "cat /sys/class/power_supply/battery/status").strip()
         check("above window -> charging off", s["charging_allowed"] == "0" and cur < 30000 and st != "Charging",
               f"battery {cap} %, window {cap - 10}-{cap - 5}, current {cur} uA, status {st}")
-        setp("charge_lo", cap + 5); setp("charge_hi", cap + 10); s = power("tick"); time.sleep(4)
-        cur = int(power()["battery_current_ua"])
+        setp("charge_lo", cap + 5); setp("charge_hi", cap + 10); s = power("tick")
+        # the charger takes a few seconds to ramp back up after being off (longer under load): poll, don't guess
+        for _ in range(12):
+            time.sleep(1)
+            cur = int(power()["battery_current_ua"])
+            if cur > 50000:
+                break
         check("below window -> charging on", s["charging_allowed"] == "1" and cur > 50000, f"current {cur} uA")
 
         print("== thermal guard")
