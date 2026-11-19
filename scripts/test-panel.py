@@ -240,7 +240,8 @@ def main():
         if i == 0:
             p.sock.settimeout(10)
         if i % 200 == 0:
-            list(p._lines(0))  # drain replies so the phone never blocks on a full socket
+            # drain replies so the phone never blocks on a full socket. Raw bytes only: a reply split across reads
+            # isn't valid JSON on its own (parsing here crashed the suite on the S8, 2026-11-19)
             try:
                 while p.sock.recv(65536, socket.MSG_DONTWAIT):
                     pass
