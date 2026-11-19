@@ -6,6 +6,7 @@
 #   scripts/phone.sh wait                     wait until the ROM has booted and adb root is up
 #   scripts/phone.sh logs [out]               save phonepanel lines from the previous boot's kernel log
 #   scripts/phone.sh backup <out.img> [part]  read a partition into a file
+#   scripts/phone.sh plan <img-bytes> <partition-bytes>  print how flash would write (no phone; CI footprints)
 #
 # All commands that touch partitions verify by sha256 afterwards.
 set -euo pipefail
@@ -13,6 +14,18 @@ set -euo pipefail
 die() { echo "phone: $*" >&2; exit 1; }
 log() { echo "phone: $*" >&2; }
 PART_DEFAULT=recovery
+
+# How flash writes an image of isize bytes onto a partition of psize bytes. Sets bs, and keep=1 with block ranges
+# s0/s1 when paneld's settings store at [end-2MiB, end-1MiB) is skipped. 64 KiB blocks where they divide the
+# partition, else 4 KiB (Galaxy S9+ RECOVERY: 68149248 B = 1039.875 x 64 KiB).
+flash_plan() {
+    local isize=$1 psize=$2
+    bs=65536; (( psize % bs )) && bs=4096
+    keep=0
+    if (( isize == psize && psize % bs == 0 )); then
+        keep=1; nblk=$(( psize / bs )); s0=$(( nblk - 2097152 / bs )); s1=$(( nblk - 1048576 / bs ))
+    fi
+}
 
 # PhoneKit's own adbd (PHONEBOX mode) also shows up as an adb "device": tell it apart and send it to the ROM.
 is_phonekit() {
@@ -61,12 +74,9 @@ flash)
     (( isize <= psize )) || die "image ($isize) larger than $part ($psize)"
     log "writing $(basename "$img") → $part"
     adb push -q "$img" /data/local/tmp/pp.img
-    # 64 KiB blocks where they divide the partition, else 4 KiB (Galaxy S9+ RECOVERY: 68149248 B = 1039.875 x 64 KiB)
-    bs=65536; (( psize % bs )) && bs=4096
-    if (( isize == psize && psize % bs == 0 )); then
-        # Full-partition image (padded to the partition): skip paneld's settings store at
-        # [end-2MiB, end-1MiB) so a deploy keeps the phone's settings.
-        nblk=$(( psize / bs )); s0=$(( nblk - 2097152 / bs )); s1=$(( nblk - 1048576 / bs ))
+    flash_plan "$isize" "$psize"
+    if (( keep )); then
+        # Full-partition image (padded to the partition): skip paneld's settings store so a deploy keeps the settings
         adb shell "dd if=/data/local/tmp/pp.img of=$blk bs=$bs count=$s0 conv=fsync 2>/dev/null &&
                    dd if=/data/local/tmp/pp.img of=$blk bs=$bs skip=$s1 seek=$s1 conv=fsync 2>/dev/null &&
                    rm /data/local/tmp/pp.img && sync"
@@ -98,6 +108,15 @@ logs)
     [[ -n $start ]] || die "no paneld boot found in last_kmsg"
     tail -n +"$start" "$tmp" | grep -a -E 'Linux version|paneld|Kernel panic|Oops|watchdog|BUG:' |
         sed 's/^<[0-9]*>//' | cut -c1-220 > "$out"
+    ;;
+plan)
+    isize=${1:?image bytes}; psize=${2:?partition bytes}
+    flash_plan "$isize" "$psize"
+    if (( keep )); then
+        echo "flash: blocks of $bs B, write [0, $(( s0 * bs ))) and [$(( s1 * bs )), $psize), keep the settings store [$(( s0 * bs )), $(( s1 * bs )))"
+    else
+        echo "flash: whole image in 1 MiB blocks (settings store overwritten)"
+    fi
     ;;
 backup)
     out=${1:?out}; part=${2:-$PART_DEFAULT}

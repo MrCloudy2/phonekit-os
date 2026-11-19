@@ -1,0 +1,146 @@
+# footprint of samsung-dreamlte: what the repo puts on this phone and how (scripts/footprint.py; make device=samsung-dreamlte footprint-update)
+[build]
+ARCH = arm64
+TARGET_PARTITION = RECOVERY
+TARGET_PARTITION_NAME = RECOVERY
+TARGET_PARTITION_SIZE = 48234496
+AVB_FOOTER = 0
+FLASH_CMD = heimdall flash --$(TARGET_PARTITION) $(1) --no-reboot
+KERNEL_SRC = kernel-universal8895
+KERNEL_DEFCONFIG = exynos8895-dreamlte_defconfig
+KERNEL_FRAGMENTS = kernel/phonepanel.cfg
+KERNEL_DTB_GLOB = 
+KERNEL_MAKE_FLAGS = CLANG_PREFIX=--prefix=$(dir $(shell which aarch64-linux-gnu-as))aarch64-linux-gnu- LD=aarch64-linux-gnu-ld KCFLAGS=-Wno-strict-prototypes
+
+[kernel]
+source third_party/kernel-universal8895, defconfig exynos8895-dreamlte_defconfig
+fragment kernel/phonepanel.cfg: CONFIG_USB_CONFIGFS_F_HID=y
+fragment kernel/phonepanel.cfg: CONFIG_USB_CONFIGFS_MASS_STORAGE=y
+patch 0001-pidfd-use-the-4.4-seq_put_decimal_ull-signature.patch 7d9f01d5e49afabe
+patch 0002-cpuset-match-the-allow_attach-signature.patch 6a0e63f0a8984131
+patch 0003-mkcompile_h-use-only-the-first-compiler-version-line.patch 2165eb20704e6f10
+
+[image]
+dir /dev 0755
+nod /dev/console 0600 c 5 1
+nod /dev/null 0666 c 1 3
+nod /dev/kmsg 0644 c 1 11
+dir /proc 0755
+dir /sys 0755
+dir /tmp 1777
+dir /run 0755
+dir /config 0755
+dir /etc 0755
+dir /bin 0755
+file /init 0755 <- built: paneld (devices/<dev>/hw.c, see paneld-config.txt)
+file /etc/phonepanel-version 0644 <- built: version string
+slink /etc/resolv.conf -> /run/resolv.conf
+dir /vendor 0755
+dir /vendor/etc 0755
+dir /mnt 0755
+dir /mnt/vendor 0755
+dir /mnt/vendor/efs 0755
+dir /mnt/vendor/efs/wifi 0755
+tree /vendor/etc/wifi 0644 (optional) <- local, optional: devices/samsung-dreamlte/prebuilt/firmware/wifi (gitignored)
+tree /lib 0644 (optional) <- local, optional: devices/samsung-dreamlte/prebuilt/firmware/lib (gitignored)
+tree /efs 0644 (optional) <- local, optional: devices/samsung-dreamlte/prebuilt/firmware/efs-root (gitignored)
+file /mnt/vendor/efs/wifi/.mac.info 0644 (optional) <- local, optional: devices/samsung-dreamlte/prebuilt/firmware/efs/mac.info (gitignored)
+dir /mnt/vendor/efs/bluetooth 0755
+file /mnt/vendor/efs/bluetooth/bt_addr 0644 (optional) <- local, optional: devices/samsung-dreamlte/prebuilt/firmware/efs/bt_addr (gitignored)
+file /bin/wpa_supplicant 0755 (optional) <- built: Wi-Fi tools (scripts/build-wifi-tools.sh) /wpa_supplicant
+file /bin/wpa_cli 0755 (optional) <- built: Wi-Fi tools (scripts/build-wifi-tools.sh) /wpa_cli
+file /bin/iw 0755 (optional) <- built: Wi-Fi tools (scripts/build-wifi-tools.sh) /iw
+file /bin/iptables 0755 (optional) <- built: Wi-Fi tools (scripts/build-wifi-tools.sh) /iptables
+file /bin/dropbearmulti 0755 (optional) <- built: Wi-Fi tools (scripts/build-wifi-tools.sh) /dropbearmulti
+file /bin/busybox 0755 (optional) <- built: busybox (scripts/build-busybox.sh)
+
+[flash]
+partition RECOVERY 48234496 B, image padded to it
+flash: blocks of 65536 B, write [0, 46137344) and [47185920, 48234496), keep the settings store [46137344, 47185920)
+
+[usb]
+# boot (stored usb_mode B)
+mkdir /config/usb_gadget/pp
+write /sys/class/android_usb/android0/enable = 0
+write /config/usb_gadget/pp/idVendor = 0x1d6b
+write /config/usb_gadget/pp/idProduct = 0x0104
+write /config/usb_gadget/pp/bcdDevice = 0x0100
+write /config/usb_gadget/pp/bcdUSB = 0x0200
+write /config/usb_gadget/pp/bDeviceClass = 0xEF
+write /config/usb_gadget/pp/bDeviceSubClass = 0x02
+write /config/usb_gadget/pp/bDeviceProtocol = 0x01
+mkdir /config/usb_gadget/pp/strings/0x409
+write /config/usb_gadget/pp/strings/0x409/manufacturer = phonepanel
+write /config/usb_gadget/pp/strings/0x409/product = phonepanel
+write /config/usb_gadget/pp/strings/0x409/serialnumber = phonepanel
+mkdir /config/usb_gadget/pp/configs/c.1
+mkdir /config/usb_gadget/pp/configs/c.1/strings/0x409
+write /config/usb_gadget/pp/configs/c.1/strings/0x409/configuration = phonepanel
+write /config/usb_gadget/pp/configs/c.1/MaxPower = 500
+mkdir /config/usb_gadget/pp/functions/acm.gs0
+link /config/usb_gadget/pp/configs/c.1/acm.gs0 -> /config/usb_gadget/pp/functions/acm.gs0
+mkdir /config/usb_gadget/pp/functions/acm.gs1
+link /config/usb_gadget/pp/configs/c.1/acm.gs1 -> /config/usb_gadget/pp/functions/acm.gs1
+mkdir /config/usb_gadget/pp/functions/acm.gs2
+link /config/usb_gadget/pp/configs/c.1/acm.gs2 -> /config/usb_gadget/pp/functions/acm.gs2
+mkdir /config/usb_gadget/pp/functions/hid.usb0
+write /config/usb_gadget/pp/functions/hid.usb0/protocol = 0
+write /config/usb_gadget/pp/functions/hid.usb0/subclass = 0
+write /config/usb_gadget/pp/functions/hid.usb0/report_length = 62
+write /config/usb_gadget/pp/functions/hid.usb0/report_desc = (485-byte report descriptor)
+mkdir /config/usb_gadget/pp/functions/hid.usb1
+write /config/usb_gadget/pp/functions/hid.usb1/protocol = 0
+write /config/usb_gadget/pp/functions/hid.usb1/subclass = 0
+write /config/usb_gadget/pp/functions/hid.usb1/report_length = 7
+write /config/usb_gadget/pp/functions/hid.usb1/report_desc = (79-byte report descriptor)
+mkdir /config/usb_gadget/pp/functions/hid.usb2
+write /config/usb_gadget/pp/functions/hid.usb2/protocol = 1
+write /config/usb_gadget/pp/functions/hid.usb2/subclass = 1
+write /config/usb_gadget/pp/functions/hid.usb2/report_length = 8
+write /config/usb_gadget/pp/functions/hid.usb2/report_desc = (64-byte report descriptor)
+mkdir /config/usb_gadget/pp/functions/hid.usb3
+write /config/usb_gadget/pp/functions/hid.usb3/protocol = 0
+write /config/usb_gadget/pp/functions/hid.usb3/subclass = 0
+write /config/usb_gadget/pp/functions/hid.usb3/report_length = 2
+write /config/usb_gadget/pp/functions/hid.usb3/report_desc = (23-byte report descriptor)
+mkdir /config/usb_gadget/pp/functions/rndis.usb0
+mkdir /config/usb_gadget/pp/functions/ffs.adb
+write /sys/class/android_usb/android0/enable = 0
+write /config/usb_gadget/pp/idVendor = 0x18d1
+write /config/usb_gadget/pp/idProduct = 0x4ee4
+link /config/usb_gadget/pp/configs/c.1/rndis.usb0 -> /config/usb_gadget/pp/functions/rndis.usb0
+link /config/usb_gadget/pp/configs/c.1/ffs.adb -> /config/usb_gadget/pp/functions/ffs.adb
+write /sys/class/android_usb/android0/enable = 0
+write /sys/class/android_usb/android0/functions = acm,rndis,adb
+write /config/usb_gadget/pp/UDC = UDC
+write /sys/class/android_usb/android0/enable = 1
+net usb0 10.42.0.2/24 up, DHCP server for the host
+# switch to mode A
+unlink /config/usb_gadget/pp/configs/c.1/rndis.usb0
+unlink /config/usb_gadget/pp/configs/c.1/ffs.adb
+write /sys/class/android_usb/android0/enable = 0
+write /config/usb_gadget/pp/idVendor = 0x1d6b
+write /config/usb_gadget/pp/idProduct = 0x0104
+link /config/usb_gadget/pp/configs/c.1/hid.usb0 -> /config/usb_gadget/pp/functions/hid.usb0
+link /config/usb_gadget/pp/configs/c.1/hid.usb1 -> /config/usb_gadget/pp/functions/hid.usb1
+link /config/usb_gadget/pp/configs/c.1/hid.usb2 -> /config/usb_gadget/pp/functions/hid.usb2
+link /config/usb_gadget/pp/configs/c.1/hid.usb3 -> /config/usb_gadget/pp/functions/hid.usb3
+write /sys/class/android_usb/android0/enable = 0
+write /sys/class/android_usb/android0/functions = acm,hid
+write /config/usb_gadget/pp/UDC = UDC
+write /sys/class/android_usb/android0/enable = 1
+# switch to mode B
+unlink /config/usb_gadget/pp/configs/c.1/hid.usb0
+unlink /config/usb_gadget/pp/configs/c.1/hid.usb1
+unlink /config/usb_gadget/pp/configs/c.1/hid.usb2
+unlink /config/usb_gadget/pp/configs/c.1/hid.usb3
+write /sys/class/android_usb/android0/enable = 0
+write /config/usb_gadget/pp/idVendor = 0x18d1
+write /config/usb_gadget/pp/idProduct = 0x4ee4
+link /config/usb_gadget/pp/configs/c.1/rndis.usb0 -> /config/usb_gadget/pp/functions/rndis.usb0
+link /config/usb_gadget/pp/configs/c.1/ffs.adb -> /config/usb_gadget/pp/functions/ffs.adb
+write /sys/class/android_usb/android0/enable = 0
+write /sys/class/android_usb/android0/functions = acm,rndis,adb
+write /config/usb_gadget/pp/UDC = UDC
+write /sys/class/android_usb/android0/enable = 1
+net usb0 10.42.0.2/24 up, DHCP server for the host

@@ -642,6 +642,7 @@ int adbd_init(const char *configfs_gadget) {
     char p[160];
     for (int i = 0; i < MAX_STREAMS; i++) pthread_cond_init(&st[i].cv, NULL);
     snprintf(p, sizeof p, "%s/functions/ffs.adb", configfs_gadget);
+    if (plan_mode) { pl_mkdir(p); ready = 1; return 0; } /* USB plan: no FunctionFS, adb counts as ready */
     if (mkdir(p, 0755) < 0 && errno != EEXIST) { logmsg("adb: %s: %s", p, strerror(errno)); return -1; }
     mkdir("/dev/usb-ffs", 0755);
     mkdir(FFS_DIR, 0755);

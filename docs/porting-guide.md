@@ -134,9 +134,9 @@ When your phone needs something paneld can't express yet:
    is then unchanged without anyone touching its file.
 2. Set the field in your `hw.c`, and use it in shared code through `phone.<field>`. Never write `#ifdef <your phone>`,
    and never guess the phone type at runtime ("this sysfs file exists, so it must be ...").
-3. Run `make device=<dev> config-update` for each phone and commit `devices/*/paneld-config.txt`. That file is what
-   paneld does on the phone, and CI fails when it changes without the commit. A change for one phone should only
-   change that phone's file.
+3. Run `make device=<dev> config-update footprint-update` for each phone and commit `devices/*/paneld-config.txt` and
+   `devices/*/footprint.txt`. They are what paneld does on the phone and what goes onto it, and CI fails when they
+   change without the commit. A change for one phone should only change that phone's files.
 
 ## Stage 6 (optional): Kernel from source
 Needed to trim boot time or to enable gadget functions the ROM's kernel lacks (`CONFIG_USB_CONFIGFS_F_HID`
@@ -151,8 +151,10 @@ for MOUSE/KEYBOARD/SCREEN touch, `CONFIG_USB_CONFIGFS_MASS_STORAGE`).
 - `scripts/devicedb.py check` validates your record; `scripts/devicedb.py table` refreshes `docs/devices.md` (CI checks both).
 - Fill in `device.yaml` with every verified fact (`verified: true` only when you tested it).
 - Add `docs/verification/<device>.md` with what you tested, or extend the table in the README.
-- `make device=<dev> config-update` writes `devices/<dev>/paneld-config.txt`, which shows what paneld does on your
-  phone. CI compares it on every change. Check it reads right, then commit it.
+- `make device=<dev> config-update footprint-update` writes `devices/<dev>/paneld-config.txt` (what paneld does on
+  your phone) and `devices/<dev>/footprint.txt` (what goes onto it: build settings, kernel config, image, flash
+  layout, the USB gadget per mode). CI compares both on every change, so later changes can't reach your phone
+  unnoticed. Check they read right, then commit them.
 - After a verified `scripts/pptest.py --device <dev>` run, create your phone's baseline with
   `scripts/ppregress.py <dev> docs/verification/<dev>-report.md --update`. From then on, nobody's change can quietly
   break what your phone passes.

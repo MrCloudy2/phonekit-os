@@ -109,7 +109,7 @@ int boot_key_held(int code) {
 
 /* If devtmpfs did not give us a node, create it from /sys/class/<cls>/<name>/dev. */
 void ensure_node(const char *cls, const char *name, const char *path) {
-    if (access(path, F_OK) == 0) return;
+    if (plan_mode || access(path, F_OK) == 0) return;
     char p[256], buf[32];
     snprintf(p, sizeof p, "/sys/class/%s/%s/dev", cls, name);
     if (read_file(p, buf, sizeof buf) < 0) return;
@@ -135,8 +135,51 @@ long now_ms(void) {
     return ts.tv_sec * 1000L + ts.tv_nsec / 1000000;
 }
 
+/* ---- USB plan mode (PANELD_PRINT_USB_PLAN, CI footprints): the gadget code runs against a temporary directory
+   instead of /config and /sys, and every filesystem operation it makes is printed, in order, on stdout. */
+int plan_mode;
+static char plan_root[96];
+void plan_set_root(const char *root) { snprintf(plan_root, sizeof plan_root, "%s", root); plan_mode = 1; }
+const char *plan_path(const char *p, char *buf, size_t len) {
+    if (!plan_mode || p[0] != '/') return p;
+    snprintf(buf, len, "%s%s", plan_root, p);
+    return buf;
+}
+void plan_log(const char *fmt, ...) {
+    if (!plan_mode) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+    putchar('\n');
+}
+int pl_mkdir(const char *p) {
+    char b[256];
+    if (!plan_mode) return mkdir(p, 0755);
+    plan_log("mkdir %s", p);
+    plan_path(p, b, sizeof b);
+    /* configfs makes a gadget's functions/, configs/ and strings/ itself: create missing parents silently */
+    for (char *s = b + strlen(plan_root) + 1; (s = strchr(s, '/')); s++) { *s = 0; mkdir(b, 0755); *s = '/'; }
+    return mkdir(b, 0755);
+}
+int pl_symlink(const char *src, const char *dst) {
+    char a[256], b[256];
+    plan_log("link %s -> %s", dst, src);
+    return symlink(plan_path(src, a, sizeof a), plan_path(dst, b, sizeof b));
+}
+int pl_unlink(const char *p) { char b[256]; int r = unlink(plan_path(p, b, sizeof b)); if (!r) plan_log("unlink %s", p); return r; }
+int pl_access(const char *p, int m) { char b[256]; return access(plan_path(p, b, sizeof b), m); }
+
 int write_file(const char *path, const char *s) {
-    int fd = open(path, O_WRONLY | O_CLOEXEC);
+    char pb[256];
+    if (plan_mode) { /* newlines shown as \n, so the plan stays one line per operation */
+        char v[160]; size_t o = 0;
+        for (const char *c = s; *c && o < sizeof v - 3; c++) { if (*c == '\n') { v[o++] = '\\'; v[o++] = 'n'; } else v[o++] = *c; }
+        v[o] = 0;
+        plan_log("write %s = %s", path, v);
+    }
+    path = plan_path(path, pb, sizeof pb);
+    int fd = open(path, O_WRONLY | O_CLOEXEC | (plan_mode ? O_CREAT | O_TRUNC : 0), 0644);
     if (fd < 0) return -1;
     ssize_t n = write(fd, s, strlen(s));
     int e = errno;
@@ -146,6 +189,8 @@ int write_file(const char *path, const char *s) {
 }
 
 int read_file(const char *path, char *buf, size_t len) {
+    char pb[256];
+    path = plan_path(path, pb, sizeof pb);
     int fd = open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0) return -1;
     ssize_t n = read(fd, buf, len - 1);

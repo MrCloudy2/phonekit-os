@@ -22,7 +22,9 @@ jobs:
           ./fuzz_json 300000
       - name: Build paneld for every device (its own hw.c and device.mk), run it under qemu, compare its behaviour
         # A port must not break another phone: every device has to build and start, and what paneld does on it
-        # (PANELD_PRINT_CONFIG: hw.c + shared defaults) must match devices/<dev>/paneld-config.txt.
+        # (PANELD_PRINT_CONFIG: hw.c + shared defaults) must match devices/<dev>/paneld-config.txt, and what goes onto
+        # the phone (scripts/footprint.py: build, kernel config, image, flash layout, USB gadget plan) must match
+        # devices/<dev>/footprint.txt.
         run: |
           for mk in devices/*/device.mk; do
             dev=$(basename "$(dirname "$mk")")
@@ -31,6 +33,7 @@ jobs:
             make device="$dev" out/"$dev"/paneld
             make device="$dev" test
             make device="$dev" config-check
+            make device="$dev" footprint-check
             echo "::endgroup::"
           done
       - name: DECK mode and drawing (ASan + UBSan)

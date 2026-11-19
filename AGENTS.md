@@ -25,11 +25,17 @@ that turns an old phone into a touch panel. Users flash it to real phones. Mista
 - Record what you verified in `docs/verification/` and keep `ROADMAP.md` statuses honest.
 - A port must not break the phones that already work. Per-phone behaviour lives in `devices/<dev>/hw.c` (the
   table in `paneld/hw.h`). A new field gets a default in `HW_DEFAULTS` that keeps the old behaviour, so other phones
-  don't change. No `#ifdef <phone>` and no runtime guessing of the phone type. CI builds and starts paneld for every
-  device, and compares `PANELD_PRINT_CONFIG` with `devices/<dev>/paneld-config.txt`: if another phone's file changes
-  in your diff, you changed that phone. On hardware, `make check-all` runs pptest on every connected phone
-  against its `devices/<dev>/pptest-baseline.txt`: a check that passed there and now fails is a regression and
-  blocks the change. Update a baseline (`ppregress.py <dev> --update`) only after a verified run, and paste
+  don't change. No `#ifdef <phone>` and no runtime guessing of the phone type.
+- Nobody can test every phone on every change, so CI shows what a change reaches instead. For every device it builds
+  and starts paneld and compares two files: `devices/<dev>/paneld-config.txt` (what paneld does: `hw.c` + defaults)
+  and `devices/<dev>/footprint.txt` (what goes onto the phone and how: build settings, kernel config, image contents,
+  flash layout, the USB gadget per mode; `scripts/footprint.py`). If another phone's file changes in your diff, your
+  change reaches that phone: say why in the PR, or make it opt-in through `hw.c`. Refresh them with
+  `make device=<dev> config-update footprint-update`.
+- On hardware, run `make check-all` with the phones you have; it compares each with its `pptest-baseline.txt`, and a
+  check that passed there and now fails blocks the change. You don't owe a run on phones you don't have: each phone's
+  owner re-verifies later, and `docs/devices.md` shows the commit every phone last passed at ("Verified at", from the
+  baseline). Update a baseline (`ppregress.py <dev> --update`) only after a verified, committed run, and paste
   `out/check-all.md` into the PR.
 - Document as you port, not at the end: every fact you learn about the phone (with its source and date) goes into
   `device.yaml`, every chip-wide finding into `socs/<soc>/quirks.md`, every new symptom and fix into
