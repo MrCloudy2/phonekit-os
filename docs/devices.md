@@ -9,6 +9,7 @@ had uncommitted changes on top.
 
 | Device | Model | SoC | boots (M0) | touch (M2) | power (M4) | USB modes (M5) | SCREEN (M6) | rotation (M6e) | PPJ/1 (M7) | PHONEBOX (M12b) | Wi-Fi (M10) | Verified at |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
+| [Samsung Galaxy S10e](../devices/samsung-beyond0lte/device.yaml) | SM-G970F | Exynos 9820 (universal9820) | ✅ | ✅ | 🟨 | ✅ | ⬜ | ⬜ | ✅ | ✅ | 🟨 | not yet |
 | [Samsung Galaxy S8](../devices/samsung-dreamlte/device.yaml) | SM-G950F | Exynos 8895 (universal8895) | ✅ | ✅ | 🟨 | ✅ | ✅ | 🟨 | ✅ | ✅ | 🟨 | `3e7acd9-dirty` 2026-11-19, 91 passes |
 | [Samsung Galaxy S9+](../devices/samsung-star2lte/device.yaml) | SM-G965F | Exynos 9810 (universal9810) | ✅ | ✅ | ✅ | ✅ | ✅ | 🟨 | ✅ | ✅ | ✅ | `c7f164e-dirty` 2026-11-19, 92 passes |
 | [Samsung Galaxy XCover Pro](../devices/samsung-xcoverpro/device.yaml) | SM-G715FN | Exynos 9611 (universal9611) | ✅ | ✅ | 🟨 | ✅ | ✅ | ✅ | ✅ | ✅ | 🟨 | `52f6d3f-dirty` 2026-11-19, 94 passes |
