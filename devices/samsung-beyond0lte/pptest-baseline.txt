@@ -1,0 +1,94 @@
+# pptest baseline for samsung-beyond0lte: what this phone passed at 3bd2414-dirty, 2026-11-19 (scripts/ppregress.py --update)
+# suite	status	count	check
+display	PASS	1	CPUs mostly in deepest idle (cluster sleep)
+display	PASS	1	about 1 frame per second
+display	PASS	1	damage = clock rectangle only
+display	PASS	1	paneld CPU < 1 % of one core
+display	PASS	1	zero frames when nothing changes
+input-modes	PASS	1	SCREEN: host picture restored after other modes
+input-modes	PASS	1	bottom-left zone = left button
+input-modes	PASS	1	host sees phonepanel mouse + keyboard
+input-modes	PASS	1	keys still type in combo
+input-modes	PASS	1	landscape: tapping A (logical coords) types KEY_A
+input-modes	PASS	1	menu opens
+input-modes	PASS	1	menu: vol down + xcover selects KEYBOARD
+input-modes	PASS	1	mode next: SCREEN -> MOUSE
+input-modes	PASS	1	one-finger swipe moves the pointer right/down
+input-modes	PASS	1	sticky Shift then A = Shift+A
+input-modes	PASS	1	tap = left click
+input-modes	PASS	1	tap A types KEY_A
+input-modes	PASS	1	tap in the trackpad strip = click
+input-modes	PASS	1	three-finger tap = middle click
+input-modes	PASS	1	two-finger drag scrolls
+input-modes	PASS	1	two-finger tap = right click
+keys	PASS	1	bixby long -> mode menu
+keys	PASS	1	bixby long again -> menu closed
+keys	PASS	1	first key in the dark only wakes
+keys	PASS	1	key.volup.short=page_next takes effect
+keys	PASS	1	power short -> screen off
+keys	SKIP	1	top key -> pages
+keys	PASS	1	vol down long -> next page
+keys	PASS	1	vol up long -> previous page
+keys	PASS	1	volume up/down step the backlight
+panel	PASS	1	10 button taps → 10 press events
+panel	PASS	1	60 widgets → capped (≤48) or refused, never crashes
+panel	PASS	1	TCP 7700 reachable over the USB network
+panel	PASS	1	after fuzz: paneld did not restart
+panel	PASS	1	after fuzz: still answers ping
+panel	PASS	1	after fuzz: valid layout still works
+panel	PASS	1	first client was disconnected
+panel	PASS	1	gauge at 100% filled with its #ff0000 accent
+panel	PASS	1	gauge redraws empty after set 0
+panel	PASS	1	info counts 2 pages
+panel	PASS	1	info reports grid + size
+panel	PASS	1	layout accepted (8 widgets)
+panel	PASS	1	layout on page 1
+panel	PASS	1	page 1 shown
+panel	PASS	1	page out of range → error
+panel	PASS	1	ping → pong
+panel	PASS	1	second client answers
+panel	PASS	1	set on unknown id → error
+panel	PASS	1	slider drag → several changes, ends near max / min
+panel	PASS	1	toggle flips 1,0,1,0
+panel	PASS	1	unknown op → error
+phonebox	PASS	1	adb shell works (getprop ro.phonekit = 1)
+phonebox	PASS	1	agent set up adb reverse tcp:8765
+phonebox	PASS	1	host adb lists PhoneKit as a device
+phonebox	PASS	1	landscape: 12x6 grid
+phonebox	PASS	1	live state arriving (~1/s)
+phonebox	PASS	1	media play/pause button on the Home page
+phonebox	PASS	1	native client connected to the agent's live stream
+phonebox	PASS	1	phonebox pages built
+phonebox	PASS	1	two taps → two POSTs to the agent
+power	PASS	1	CPU caps lifted on wake
+power	PASS	1	CPUs capped while off
+power	PASS	1	above window -> charging off
+power	PASS	1	below window -> charging on
+power	PASS	1	cooled -> recovers
+power	PASS	1	host wake < 300 ms (unblank)
+power	PASS	1	idle -> dim
+power	PASS	1	idle -> off (blanked)
+power	FAIL	1	off draws < 1/5 of active
+power	PASS	1	over temp_crit -> screen forced off
+power	PASS	1	over temp_limit -> charging off
+power	PASS	1	touch wakes from dim
+touch	PASS	1	10 simultaneous contacts tracked
+touch	PASS	1	frames flushed (batched, ≤1 per vsync)
+touch	PASS	1	glove_mode command accepted
+touch	PASS	2	rotation
+touch	PASS	1	rotation 180: logical 216,325
+touch	PASS	1	rotation 270: logical 456,154
+touch	PASS	1	software latency avg < 34 ms (≤ 2 frames)
+touch	PASS	1	stroke drawn at the touched pixels
+touch	PASS	1	untouched area unchanged
+usb	PASS	1	3 ACM ports at interfaces 0/2/4
+usb	PASS	1	HID interface bound (usbhid)
+usb	PASS	1	USB mode survives reboot
+usb	PASS	1	control channel recovers after every replug
+usb	PASS	1	host gets DHCP and reaches the phone (ping 10.42.0.2)
+usb	PASS	1	host sees a phonepanel touchscreen input device
+usb	PASS	1	mode B again
+usb	PASS	1	network function bound on the host
+usb	PASS	1	phone touch arrives on the host at the right position
+usb	PASS	1	re-enumerated without a phone reboot; ACMs still at 0/2/4
+usb	PASS	1	store survives reboot

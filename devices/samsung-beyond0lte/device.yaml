@@ -1,0 +1,129 @@
+# PhoneKit device record: Samsung Galaxy S10e (Exynos). Fourth PhoneKit phone, ported 2026-11-19.
+# Values were read on 2026-11-19 from the test phone running the official LineageOS 23.2 (userdebug, adb root):
+# getprop, /proc/config.gz, scripts/probe.sh, getevent, blockdev, the PIT (heimdall download-pit). The boot image
+# layout comes from the official lineage-23.2-20261114 recovery.img (sha256 dfd2038a…f414), read with
+# unpack_bootimg and avbtool. Public sources are named where used.
+schema: 0
+
+identity:
+  name: Samsung Galaxy S10e
+  model: SM-G970F            # the test phone is an SM-G970F/DS (dual SIM); ro.product.model SM-G970F
+  codename: beyond0lte
+  soc: Exynos 9820 (universal9820)
+  soc_dir: socs/exynos9820
+  ram_gb: 6                  # MemTotal 5545528 kB
+  battery_removable: false
+  board_revision: 26         # ro.boot.revision; probe: "Samsung BEYOND0LTE EUR OPEN 25 board based on EXYNOS9820"
+  siblings: "Galaxy S10 (beyond1lte), S10+ (beyond2lte), S10 5G (beyondx) share the kernel tree; separate defconfigs and DTBs"
+
+panel:
+  resolution: [1080, 2280]
+  type: OLED                 # Dynamic AMOLED, 5.8"
+  controller: Samsung S6E3FA7 (CONFIG_EXYNOS_DECON_LCD_S6E3FA7); /sys/class/lcd/panel/lcd_type SDC_910115
+
+boot:
+  unlock: >-
+    OEM unlocking in developer options, then long Vol Up on the download-mode warning screen (wipes, trips Knox).
+    The test phone came on stock Android 12 (bootloader G970FXXSGHWC2, the last one) with OEM unlock and USB
+    debugging on; heimdall accepted a LineageOS recovery at once, so it was already unlocked. Verified boot state
+    under LineageOS: orange
+  flash_tool: heimdall       # 2.2.2 (Grimler's fork); LineageOS's wiki now documents samloader-rs
+  download_mode: phone off, hold Vol Down + Bixby and plug in USB, then Vol Up to continue (LineageOS wiki)
+  recovery_combo: Vol Up + Bixby + Power with USB connected, release when the recovery appears
+  forced_reset: Vol Down + Power ~8 s
+  heimdall_one_session: "one heimdall session per download-mode boot: after download-pit --no-reboot, flash failed with 'Protocol initialisation failed!' until download mode was entered again"
+  image_header_version: 1    # plain AOSP header v1 + recovery DTBO (1200128 B); unpack_bootimg reads it
+  page_size: 2048
+  load_addresses: "kernel 0x10008000, ramdisk 0x11000000, tags 0x10000100"
+  partition: recovery        # lower case by-name: /dev/block/by-name/recovery -> sda15; PIT name RECOVERY
+  partition_size: 67633152   # blockdev --getsize64 = PIT 16512 x 4096 = LineageOS BOARD_RECOVERYIMAGE_PARTITION_SIZE
+  boot_partition_size: 57671680
+  dtb_dtbo_partitions: "dtb (sda12) and dtbo (sda13), 8 MiB each: the DTB is in its own partition, not in boot/recovery"
+  avb: "hash footer on recovery (LineageOS signs it with AVB's testkey_rsa4096, chained); vbmeta built with --flags 3, so PhoneKit's --algorithm NONE footer boots (bootloader log: 'VERIFICATION_DISABLED bit is set')"
+  ab_slots: false
+  stock_firmware_required: "LineageOS needs Android 12 stock firmware first (LineageOS wiki: needs_specific_android_fw, version 12)"
+  rom: "LineageOS 23.2-20261114-NIGHTLY-beyond0lte (official, maintainer Linux4; Android 16, userdebug: adb root via Rooted debugging)"
+  rom_install: "2026-11-19: heimdall flash --RECOVERY recovery.img, forced reset straight into recovery (else stock restores its recovery), Format data, adb sideload of the signed zip (no GApps)"
+  recovery_restore: "persist.vendor.recovery_update is false on LineageOS 23.2 (checked 2026-11-19); scripts/phone.sh flash sets it false anyway"
+  recovery_on_phone: "PhoneKit; the known-good Lineage Recovery is lineage-23.2-20261114 recovery.img (official, sha256 dfd2038a…f414, identical to a dump of the partition)"
+
+kernel:
+  version: "4.14.356-openela-rc1-ga412cfaf86b9 (LineageOS 23.2 ROM kernel); PhoneKit runs the same commit built from source with host clang 23"
+  source: https://github.com/LineageOS/android_kernel_samsung_exynos9820 commit a412cfaf86b9 (branch lineage-23.2)
+  build: "host clang 23 + ld.lld; KERNEL_KCFLAGS as on the 9810; kernel-patches 0001 mkcompile_h, 0002 extract-cert without OpenSSL ENGINE. The source build's config equals the ROM kernel's /proc/config.gz plus kernel/phonepanel.cfg (checked with diff)"
+  defconfig: exynos9820-beyond0lte_defconfig
+  features: { devtmpfs: true, configfs: true, functionfs: true, hid_gadget: true, mass_storage_gadget: true, pstore_ramoops: true, modules: true }   # source build; the ROM kernel has no f_hid / mass storage
+  prebuilt: LineageOS 23.2 recovery.img (kernel + recovery DTBO; for KERNEL=prebuilt)
+
+display:
+  api: fbdev                 # Samsung DECON (drivers/video/fbdev/exynos/dpu20)
+  node: /dev/fb0
+  bits_per_pixel: 32
+  stride: 4320
+  virtual: [1080, 4560]      # double buffer via pan
+  backlight: /sys/class/backlight/panel (max 48600)
+  color_order_verified: true   # 2026-11-19 by eye (owner): red border on all edges, bar 2 yellow, with hw.c fb_swap_rb = 1
+  verified: true               # 2026-11-19: first boot showed the PHONEBOX page (screenshot) and the test pattern
+
+input:
+  touch: { name: sec_touchscreen, node: event2, max_x: 4095, max_y: 4095, slots: 10, verified: true }   # getevent -lp; strokes follow the finger (owner, by eye)
+  keys: { name: gpio_keys, node: event1, codes: [VOLUMEDOWN, VOLUMEUP, POWER, 0x2bf], verified: true }   # 0x2bf = Bixby; paneld 'keys power volup voldown bixby'
+  key_roles: "Bixby = mode key, no page key (hold Vol Up/Down for pages), as on the S8/S9+"
+  # LineageOS 23.2 event order: event0 meta_event, event1 gpio_keys, event2 sec_touchscreen, event3 sec_touchproximity,
+  # event4 grip_sensor, event5 grip_notifier, event6 ssp_context, event7 als_rear, event8 Headset, event9 hall,
+  # event10 certify_hall, event11 uinput-sec-fp
+
+usb:
+  udc: 10c00000.dwc3
+  speed: super-speed-plus    # maximum_speed under LineageOS
+  gadget_configfs: true
+  samsung_composite: "CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE=y but CONFIG_USB_OLD_CONFIGFS off: android0 has no functions/enable, so bind through UDC (hw.c .usb = HW_USB_CONFIGFS)"
+  hid_gadget: true           # source-built kernel; not in the LineageOS kernel
+  config_name: "phonepanel (default): the 'Conf 1' GSI trap is compiled out with CONFIG_USB_OLD_CONFIGFS"
+  verified: true             # 2026-11-19: 3 ACM + RNDIS + adb (18d1:4ee4), mode B configured; hid yes on the source kernel
+
+power:
+  charger: Maxim MAX77705 (with MAX77705 fuel gauge, mfc-charger wireless, ps power sharing)
+  charge_limit_method: "battery/charging_enabled: 0 -> Discharging at ~-3 mA, 1 -> Charging (LineageOS 23.2, 2026-11-19). batt_slate_mode = 1 stops charging too (-138 mA). hw.c charge_ctl = charging_enabled, not inverted"
+  cpufreq: "policy0 4x A55 442-1950 MHz, policy4 2x A75 507-2314 MHz, policy6 2x M4 520-2730 MHz"
+  boot_to_paneld_ms: 1918   # paneld_start_ms on the source kernel (prebuilt: 1921)
+  boots_without_battery: no (battery not removable)
+  power_measured: "2026-11-19, fuel gauge with charging off (test-power): 712 mW active (test pattern, brightness 128), ~405 mW dim, 143-156 mW off (blanked, CPUs capped). test-power 'off < 1/5 of active' fails by 1-14 mW"
+  battery_seen: "2026-11-19 under LineageOS: 78-82 %, health Good, fg_fullcapnom 3000 mAh, battery_cycle -1"
+
+sensors:
+  rotation: "SSP hub on the GPS chip (CONFIG_SENSORS_SSP_BBD), but paneld finds an IIO accelerometer (/dev/iio:device1) and starts autorotate"
+  ssp_sensors: accelerometer, barometer, grip, gyro, light, magnetic, proximity, thermistor (sysfs ssp_sensor under LineageOS)
+
+wifi:
+  chip: Broadcom BCM4375 rev B1 over PCIe (bcmdhd_101_16 101.16.90, built in; CONFIG_BCM4375), Semco module
+  firmware: "/vendor/firmware of LineageOS 23.2 into prebuilt/firmware/lib/firmware (-> /lib/firmware): bcmdhd_sta.bin_b1, nvram.txt_* (the driver picks nvram.txt_CS01_semco_b1 by module CID), bcmdhd_clm.blob. Loaded with request_firmware() (DHD_LINUX_STD_FW_API), as on the 9810"
+  mac: "the chip reports the phone's own MAC at 'Firmware up' (8c:..:de); a copy of /mnt/vendor/efs/wifi/.mac.info is in the image too (prebuilt/firmware/efs-root)"
+  status: "2026-11-19 under PhoneKit: firmware up, ppctl wifi scan lists the networks around (-79 dBm). Join not tried yet"
+
+bluetooth:
+  chip: Broadcom BCM4375 rev B1 on UART /dev/ttySAC1 (204:65, owned by bluetooth under the ROM), rfkill "bcm43xx Bluetooth"
+  firmware: "bcm4375B1_semco.hcd (176645 B, 1260 HCI records) from /vendor/firmware into prebuilt/firmware/lib/firmware. LineageOS's libbt loads bcm4375B1_murata.hcd (logcat bt_hwcfg 'Found patchfile'): it takes the first file matching the chip name; the Semco file matches the module the Wi-Fi side reports. The two differ (sha256 c475fd51 vs 8c8fb286)"
+  bring_up: "paneld/bt_bcm.c (hw.c .bt = HW_BT_BCM_UART), unchanged from the S9+: up at 3000000 baud in 1877 ms, then the vhci bridge (CONFIG_BT_HCIVHCI in kernel/phonepanel.cfg)"
+  address: "the phone's own 24:5A:B5:.. from a copy of /mnt/vendor/efs/bluetooth/bt_addr (ro.bt.bdaddr_path) in prebuilt/firmware/efs-root"
+  status: "2026-11-19: hci0 present, inquiry completes (no discoverable device nearby). Pairing not tried. Tested with 'ppctl bt wired-off off' (paneld keeps Bluetooth off while a computer is on the cable by default), set back to on afterwards"
+
+quirks:
+  - "USB: Samsung composite without CONFIG_USB_OLD_CONFIGFS: no android0/functions, bind through UDC (hw.c .usb = HW_USB_CONFIGFS)"
+  - "by-name partition links are lower case (recovery), unlike the S8/S9+"
+  - "one heimdall session per download-mode boot"
+  - "kernel host tool extract-cert doesn't link against OpenSSL 4 (no ENGINE API): kernel-patches/0002"
+  - "stock Android 12 never showed the adb authorization prompt (keys revoked, USB debugging toggled, replugged); not needed: the install goes through download mode"
+  - "virt-manager (SPICE USB auto-redirect) runs on the test PC; it didn't grab the S10e during this port"
+
+milestones:
+  M0: confirmed 2026-11-19   # prebuilt LineageOS 23.2 kernel: PHONEBOX page and test pattern on the second boot (first: wrong USB type)
+  M2: confirmed 2026-11-19   # strokes follow the finger (owner); test-touch 10/10, 4 rotations
+  M3: confirmed 2026-11-19   # test-display 5/5
+  M4: partial 2026-11-19     # test-power 11/12: limiter, dim/off, CPU caps, thermal pass; screen-off power ratio fails by ~1 mW
+  M5: confirmed 2026-11-19   # test-usb 11/11 (UDC configfs)
+  M6b: confirmed 2026-11-19  # MOUSE, KEYBOARD, COMBO (test-input-modes 16/16, source kernel)
+  M7: confirmed 2026-11-19   # test-panel 21/21 (PPJ/1 over the USB network)
+  M12b: confirmed 2026-11-19 # test-phonebox 9/9 with the stock agent over USB
+  M10: partial 2026-11-19    # Wi-Fi: firmware up, scan works; join not tried
+  M10c: partial 2026-11-19   # Bluetooth: controller up, hci0, inquiry; pairing not tried

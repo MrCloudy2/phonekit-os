@@ -119,6 +119,8 @@ Typical device-specific things:
 | Broadcom Bluetooth on a UART | no `scsc_h4`, an rfkill `bcm43xx Bluetooth`, a `*.hcd` in the ROM's firmware | Galaxy S9+: `hw.c` `.bt = HW_BT_BCM_UART`, `.bt_uart`, `.bt_rfkill`, `.bt_fw`; `CONFIG_BT_HCIVHCI` |
 | Shared default radio addresses | Bluetooth `43:61:B2:00:1F:AC`, Wi-Fi `00:90:4c:..` | copy the ROM's `/efs/bluetooth/bt_addr` (and `/efs/wifi/.mac.info`) into `prebuilt/firmware/efs-root/` (-> `/efs` in the image) |
 | Newer kernel than your clang expects | `-Werror` stops the build on diagnostics the tree's own clang didn't have | Galaxy S9+: `KERNEL_KCFLAGS` in `device.mk` (several flags; `KERNEL_MAKE_FLAGS` splits on spaces) |
+| `android0` without `functions`/`enable` | `write android0/functions=...: No such file or directory`, the PC sees nothing | Galaxy S10e: the Exynos 9820 kernel has Samsung's composite layer but not `CONFIG_USB_OLD_CONFIGFS`, so bind through UDC: `hw.c` `.usb = HW_USB_CONFIGFS` (check `ls /sys/class/android_usb/android0` before picking the composite type) |
+| Kernel host tools vs. OpenSSL 4 | `extract-cert.c: undefined reference to ENGINE_load_builtin_engines` | Galaxy S10e: skip the PKCS#11 branch when `OPENSSL_NO_ENGINE` is defined (`devices/samsung-beyond0lte/kernel-patches/0002`) |
 
 ### The hardware layer: `devices/<dev>/hw.c`
 Everything paneld does differently per phone is one table, `struct phone_hw` (fields and meanings in
